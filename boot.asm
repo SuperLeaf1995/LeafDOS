@@ -1,3 +1,6 @@
+; Use the -i option in NASM
+%include "drivers/text.asm"
+
   cli ; Flush registers and stuff, basicaly we are all clear
 boot:
   jmp $ ; Loop forever
