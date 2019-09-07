@@ -18,6 +18,7 @@
   
   jmp boot
 boot:
+  call keyboard_input
   jmp $ ; Loop forever
   
   ; Okey, we are now safe, lets do something more
