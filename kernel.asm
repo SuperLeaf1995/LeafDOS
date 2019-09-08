@@ -312,21 +312,53 @@ StringLenght:
 .end:
 	ret
 	
+;In: SI = string
+;Out: DI = STRING
 global ToUppercase
 ToUppercase:
 .loop:
 	lodsb
 	cmp al, 0
 	je .end
-	cmp al, 'a' ;We got a letter A
+	cmp al, 97 ;We got a letter A
 	jge .ToUpper
+	jmp .loop
 .ToUpper:
 	;Is it below the standard A?
-	cmp al, 'a'
+	cmp al, 97
 	jl .loop
+	;I think z must being a thing
+	cmp al, 122
+	jg .loop
 	;Yay we found an A
-	sub al, 76
+	sub al, 32
 	stosb ;We uppercase it
+	jmp .loop
+.end:
+	ret
+	
+;In: SI = STRING
+;Out: DI = string
+global ToLowercase
+ToLowercase:
+.loop:
+	lodsb
+	cmp al, 0
+	je .end
+	cmp al, 65 ;We got a letter A
+	jge .ToUpper
+	jmp .loop
+.ToUpper:
+	;Is it below the standard A?
+	cmp al, 65
+	jl .loop
+	;Z?
+	cmp al, 90
+	jg .loop
+	;Yay we found an A
+	add al, 32
+	stosb ;We lowercase it
+	jmp .loop
 .end:
 	ret
 	
