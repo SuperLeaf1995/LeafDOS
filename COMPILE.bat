@@ -4,31 +4,27 @@ cd BIN_DUMP
 del *.* /Q
 cd..
 
-nasm -O0 -f bin -o BIN_DUMP\BOOT.IRK SOURCE\BOOT.ASM
-nasm -O0 -f bin -o BIN_DUMP\KERNEL.SYS SOURCE\KERNEL.ASM
-
-cd SOURCE\PROGRAMS
-for %%i in (*.ASM) do copy %%i ..\..\BIN_DUMP
-for %%i in (*.INC) do copy %%i ..\..\BIN_DUMP
+echo Compiling binaries
+cd SOURCE\BOOT
+nasm -O0 -f bin -o ..\..\BIN_DUMP\BOOT.IRK BOOT.ASM
+cd..
+cd KERNEL
+nasm -O0 -f bin -o ..\..\BIN_DUMP\KERNEL.SYS KERNEL.ASM
+cd..
+cd PROGRAMS
+for %%i in (*.ASM) do nasm -O0 -f bin -o ..\..\BIN_DUMP\%%i.EXE %%i
 cd..
 cd..
 
-cd BIN_DUMP
-for %%i in (*.ASM) do nasm -O0 -f bin %%i
-for %%i in (*.BIN) do del %%i
-for %%i in (*.) do ren %%i %%i.EXE
-for %%i in (*.ASM) do del %%i
-for %%i in (*.INC) do del %%i
-cd..
-
+echo Deleting old floppy disk image
 cd DISK
 del LEAFOS.*
 cd..
 
+echo Copying bootsector to the first 512 bytes of the floppy disk image
 partcopy "%CD%\BIN_DUMP\BOOT.IRK" "%CD%\DISK\LEAFOS.IMG" 0h 511d
 
-cd BIN_DUMP
-del BOOT.IRK
-cd..
+echo Using bin_app to append kernel to floppy image
+bin_app BIN_DUMP\KERNEL.SYS DISK\LEAFOS.IMG --shut-up-mode
 
-dosbox -c "mount c: C:\Users\Admin\Desktop\LeafOS" -c "c:" -c "cd DISK" -c "imgmount b LEAFOS.IMG -size 512,1,1,3" -c "cd.." -c "cd BIN_DUMP" -c "copy *.* b:\ " -c "exit"
+for %%i in (BIN_DUMP\*.EXE) do bin_app %CD%\%%i %CD%\DISK\LEAFOS.IMG --shut-up-mode
