@@ -1,89 +1,41 @@
 ;=======================================================================
 ;
-;IO.INC
+;io.inc
 ;
-;INCLUDE FILE THAT INCLUDES MACROS, OFFSETS, PORTS, SEGMENTS, ETC.
-;IO.ASM CANNOT WORK WITHOUT IO.INC.
+;include file that includes macros, offsets, ports, segments, etc.
+;io.asm cannot Work Without io.inc.
 ;
 ;=======================================================================
 
-;SEGMENTS
-__PROGRAM__							EQU 2000H ;WHERE PROGRAMS ARE LOADED
-__KERNEL_MODULE__					EQU 0700H ;PROGRAMS THAT RESIDE IN MEMORY, AND CAN BE CALLED
-__KERNEL__							EQU 0500H ;KERNEL LOAD MEMORY
-__MEMORY_TABLE__					EQU 0600H ;TABLE THAT MANAGES ALL ALLOCATIONS AND FREE'S
-__BUFFER__							EQU 3000H ;BUFFER FOR EVERYTHING
+;segments
+__program__								equ 4000h ;Where programs are loaded
+__kernel__								equ 2000h ;kernel load memorY
+__memory_table__						equ 0600h ;table that manages all allocations and free's
+__buffer__								equ 6000h ;buffer for everything
 
-;OFFSETS
-__AFPFS_DEFAULT__					EQU 0009H ;DEFAULT LOCATION FOR OFFSETS IN AFPFS
+;offsets
+__afpfs_default__						equ 0009h ;default location for offsets in afpfs
 
-;SPECIAL CHARACTERS
-__NEWLINE__							EQU 0DH
+;special characters
+__newline__								equ 0dh
 
-;SERIAL PORTS
-__IO_ADDRESS_COM1					EQU 03F8H
-__IO_ADDRESS_COM2					EQU 02F8H
-__IO_ADDRESS_COM3					EQU 03E8H
-__IO_ADDRESS_COM4					EQU 02E8H
+;other
+__dos_sectors__							equ 18
 
-__IO_ADDRESS_PS2_DATA_PORT			EQU 0060H
-__IO_ADDRESS_PS2_STATUS_REGISTER	EQU	0064H
-__IO_ADDRESS_PS2_COMMAND_REGISTER	EQU	0064H
+;serial ports
+io_address_com1							equ 03f8h
+io_address_com2							equ 02f8h
+io_address_com3							equ 03e8h
+io_address_com4							equ 02e8h
 
-__IO_COLOR_DEFAULT					EQU 007H
+io_address_ps2_data_port				equ 0060h
+io_address_ps2_status_register			equ	0064h
+io_address_ps2_command_register			equ	0064h
 
-;MEMORY_ALLOCATION FLAGS
-MEMORY_FLAG_SEGMENT_FREE			EQU 0AAH
-MEMORY_FLAG_SEGMENT_NOT_FREE		EQU 0EEH
-MEMORY_FLAG_SEGMENT_NEVER_FREE		EQU 0EFH
-MEMORY_FLAG_SEGMENT_KERNEL_MODULE	EQU 0FFH
+io_color_default						equ 007h
 
-%MACRO PUSH_SEGMENTS 0
-PUSH DS ;DATA SEGMENT
-PUSH ES ;EXTENDED SEGMENT
-PUSH FS ;? SEGMENT
-PUSH GS ;? SEGMENT
-%ENDMACRO
-
-%MACRO POP_SEGMENTS 0
-POP GS ;SAME AS PUSH_SEGMENTS, BUT IN REVERSE!
-POP FS
-POP ES
-POP DS
-%ENDMACRO
-
-%MACRO PUSH_INDEXES 0
-PUSH SI ;SOURCE INDEX
-PUSH DI ;DESTINATION INDEX
-%ENDMACRO
-
-%MACRO POP_INDEXES 0
-POP DI
-POP SI
-%ENDMACRO
-
-%MACRO PUSH_REGISTERS 0
-PUSH DX
-PUSH CX
-PUSH BX
-PUSH AX
-%ENDMACRO
-
-%MACRO POP_REGISTERS 0
-POP AX
-POP BX
-POP CX
-POP DX
-%ENDMACRO
-
-%MACRO PUSH_ALL 0
-PUSH_REGISTERS
-PUSH_INDEXES
-PUSH_SEGMENTS
-%ENDMACRO
-
-%MACRO POP_ALL 0
-POP_SEGMENTS
-POP_INDEXES
-POP_REGISTERS
-%ENDMACRO
+;memorY_allocation flags
+memory_flag_segment_free				equ 0aah
+memory_flag_segment_not_free			equ 0eeh
+memory_flag_segment_neVer_free			equ 0efh
+memory_flag_segment_kernel_module		equ 0ffh
