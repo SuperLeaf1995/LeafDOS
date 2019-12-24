@@ -1,239 +1,174 @@
-BITS 16
-ORG 0
+bits 16
+org 0
 
-;BOOTLOADER - FLOPPY DISTRIBUTION
+;bootloader - floppy distribution
 
-JMP SHORT INIT
-NOP
+jmp short init
+nop
 
-%DEFINE __BOOTLOADER__ ;TELL INCLUDE FILES WE ARE A BOOTLOADER
+floppy:
+	.bytes_per_sector	dw 512
+	.drive_number		db 0 ;changes later
+	.sides				db 1 ;sides/heads
+	.sectors_per_track	db 8 ;sectors/clusters
+	
+%include "..\io.inc"
 
-%INCLUDE "..\SPECS.INC"
-
-INIT:
-	MOV AX, 07C0H ;07C0 = 8192
-	ADD AX, 544
-	CLI ;DISABLE INTERRUPTS
-	MOV SS, AX ;CHANGE STACK SEGMENT
-	MOV SP, 4096
-	STI
-	MOV AX, 07C0H
-	MOV DS, AX
+init:
+	mov ax, 07c0h ;07c0 = 8192
+	add ax, 544
+	cli ;disable interrupts
+	mov ss, ax ;change stack segment
+	mov sp, 4096
+	sti
+	mov ax, 07c0h
+	mov ds, ax
 	
-	TEST DL, DL
-	JZ OLD
+	test dl, dl
+	jz short old
 	
-	XOR AX, AX
-	MOV ES, AX ;TOSHIBA BIOSES HAVES A BUG IN
-	MOV DI, 0 ;ES:DI
+	mov [floppy.drive_number], dl
+	mov ah, 8
+	int 13h
+	jc read.error
+	and cx, 3fh
+	mov [floppy.sectors_per_track], cx
+	movzx dx, dh
+	add dx, 1
+	mov [floppy.sides], dx
+old:
+	xor eax,eax
+read:
+	mov ax, 1
+	call logical_to_hts
 	
-	MOV [DISK.DRIVE_NUMBER], DL
-	MOV AH, 8
-	INT 13H
-	JC READ.DISK_ERROR
-	AND CX, 3FH
-	MOV [DISK.SECTORS_PER_TRACK], CX
-	MOVZX DX, DH
-	ADD DX, 1
-	MOV [DISK.SIDES], DX
-OLD:
-	XOR EAX,EAX
-READ:
-	MOV AX, 1
-	CALL LOGICAL_TO_HTS
-	MOV SI, BUFFER
-	MOV BX, DS
-	MOV ES, BX
-	MOV BX, SI
-	MOV AH, 2
-	MOV AL, __DOS_SECTORS__ ;READ SECTORS
-	PUSHA
-.READ_DISK:
-	POPA
-	PUSHA
-	STC
-	INT 13H
-	JNC .GIVE_DUMP
-	CALL RESET_FLOPPY
-	JNC .READ_DISK
-	JMP .DISK_ERROR
-.GIVE_DUMP:
-	POPA
-	MOV AX, DS ;PREPARE TO PUT STUFF ON BUFFER
-	MOV ES, AX ;NOW FIRST FILE ENTRY IS IN BUFFER
-	MOV DI, BUFFER
+	mov ax, __kernel__ ;segmentate to load
+	mov es, ax ;kernel into its position
+	xor bx, bx ;at zero offset
 	
-	MOV CX, 1536 ;READ MANY BYTES FROM FLOPPY DISK
-	XOR AX, AX
-.SEARCH_FILENAME:
-	XCHG CX, DX
+	mov ah, 2
+	mov al, __dos_sectors__ ;read 19 sectors
+	pusha
+.read_disk:
+	popa
+	pusha
+	stc
+	int 13h
+	jnc short .give_dump
+	call reset_floppy
+	jnc short .read_disk
+	jmp short .err
+.give_dump:
+	popa
 	
-	MOV SI, .KERNEL_FILENAME
-	MOV CX, 9
-	REP CMPSB
-	JE SHORT .FOUND_FILE_TO_LOAD
+	push ax
+	mov cx, 512 ;read many bytes from floppy disk
+	mov ax, __dos_sectors__ ;the sectors we readed
+	mul cx
+	mov cx, ax
+	pop ax
 	
-	ADD AX, 1
-	MOV DI, BUFFER
-	ADD DI, AX
-	XCHG DX, CX
-	LOOP .SEARCH_FILENAME
-	JMP .FILE_NOT_FOUND
-.FOUND_FILE_TO_LOAD:
-	MOV AX, 0500H ;SEGMENT OUR STUFF
-	MOV ES, AX
-	MOV BX, 0
-
-	MOV AH, 2
-	MOV AL, __DOS_SECTORS__
-	PUSH AX
-
-	MOV DI, BUFFER
-	MOV BX, DI
+	xor ax, ax
+.search_filename:
+	xchg cx, dx
 	
-	MOV AX, 0500H ;SET BUFFER PAST WHAT WE HAVE ALREADY READ
-	MOV ES, AX
-	MOV BX, 0
-
-	MOV AX, 1 ;READ FROM LOGICAL SECTOR 1
-	CALL LOGICAL_TO_HTS
+	mov si, .kernel_filename
+	mov cx, 9
+	rep cmpsb
+	je short .load_file
 	
-	POP AX
-	PUSH AX
+	inc ax ;increment bytes
+	inc di
 	
-	STC
-	INT 13H
-	JNC .LOAD_FILE
-	CALL RESET_FLOPPY
-	JMP .FOUND_FILE_TO_LOAD
-.LOAD_FILE:
-	MOV SI, BUFFER ;TAKE BUFFER AS SOURCE
-	ADD SI, WORD [.POINTER] ;BUFFER + AX = ACTUAL BYTE IN WICH WE ARE IN
+	xchg dx, cx
+	loop .search_filename
+	jmp short .err
+.load_file:
+	mov si, word [.pointer] ;pointer of data
+	mov ax, word [es:si] ;get data
 	
-	MOV AX, WORD [DS:SI]
+	cmp ax, 0ff8h
+	jae short .end
+	inc word [.pointer] ;incrment one byte in the buffer
+	jmp short .load_file
+.end:
+	pop ax ;ax is ok
+	mov dl, [floppy.drive_number] ;give our kernel drive number
 	
-	CMP AX, 0FF8H
-	JAE .END
-
-	INC WORD [.POINTER] ;INCRMENT ONE BYTE IN THE BUFFER
+	jmp __kernel__:__afpfs_default__ ;do the long jump!
 	
-	JMP .LOAD_FILE
-.END:
-	POP AX ;AX IS OK
-	MOV DL, [DISK.DRIVE_NUMBER] ;GIVE OUR KERNEL DRIVE NUMBER
-	JMP 0500H:0009H ;SKIP FILENAME
+	.pointer					dw 0
+	.sect						dw 0
 	
-	.POINTER					DW 0
-	.SECT						DW 0
+.error:
+	mov si, .err
+	call print_text
+	jmp reboot
 	
-.FILE_NOT_FOUND:
-	MOV SI, .FILE_NOT_FOUND_ERROR
-	CALL PRINT_TEXT
-	JMP REBOOT
-	
-.DISK_ERROR:
-	JMP DISK_ERROR
-	HLT
-	
-	.ERR						DB 'FLOPPY ERROR',0
-	.KERNEL_FILENAME			DB 'KERNELSYS',0
-	.FILE_NOT_FOUND_ERROR		DB 'KERNEL.SYS NOT FOUND',0
-	.EOF						DW 0FF8H
+	.kernel_filename			db 'KERNELSYS'
+	.err						db 'kernel.sys was not found',0
 	
 ;=======================================================================
 ;
-;BOOT.IO - IO, BUT IS SO PRIMITIVE THAT MICRO KERNELS LAUGH AT IT
+;boot.io - io, but is so primitive that micro kernels laugh at it
 ;
 ;=======================================================================
 
-LOGICAL_TO_HTS:
-	PUSH BX
-	PUSH AX
-	MOV BX, AX ;SAVE LOGICAL SECTOR
-	XOR DX, DX
-	DIV WORD [DISK.SECTORS_PER_TRACK]
-	ADD DL, 01H ;SECTORS STARTS AT 1
-	MOV CL, DL ;CL IS FOR SECTORS
-	MOV AX, BX
-	XOR DX, DX ;CALCULATE HEAD
-	DIV WORD [DISK.SECTORS_PER_TRACK]
-	XOR DX, DX
-	DIV WORD [DISK.SIDES]
-	MOV DH, DL ;HEADS/SIDE
-	MOV CH, AL ;TRACK
-	POP AX ;RESTORE AX AND BX
-	POP BX
-	MOV DL, BYTE [DISK.DRIVE_NUMBER] ;SAVE DEVICE NUMBER
-	RET
+logical_to_hts:
+	push bx
+	push ax
 	
-RESET_FLOPPY:
-	PUSH AX
-	PUSH DX
-	XOR AX, AX
-	MOV DL, BYTE [DISK.DRIVE_NUMBER]
-	STC
-	INT 13H
-	POP DX
-	POP AX
-	RET
+	mov bx, ax ;save logical sector
+	xor dx, dx
+	div word [floppy.sectors_per_track]
+	inc dl ;sectors starts at 1
+	mov cl, dl ;cl is for sectors
+	mov ax, bx
+	xor dx, dx ;calculate head
+	div word [floppy.sectors_per_track]
+	xor dx, dx
+	div word [floppy.sides]
+	mov dh, dl ;heads/side
+	mov ch, al ;track
 	
-PRINT_TEXT:
-	PUSHA
-	MOV AH, 0EH
-.LOOP:
-	LODSB ;GET BYTE FROM STRING
-	CMP AL, 0 ;IS BYTE NULL TERMINATOR?
-	JE .END
-	INT 10H
-	JMP .LOOP
-.END:
-	POPA ;RESTORE REGISTERS
-	RET
+	pop ax ;restore ax and bx
+	pop bx
 	
-REBOOT:
-	XOR AX, AX
-	INT 16H
-	XOR AX, AX
-	INT 19H
+	mov dl, byte [floppy.drive_number] ;save device number
+	retn
 	
-;WE HAVE SPACE FOR SOME DISK ERRORS
+reset_floppy:
+	push ax
+	push dx
+	xor ax, ax
+	mov dl, byte [floppy.drive_number]
+	stc
+	int 13h
+	pop dx
+	pop ax
+	retn
+	
+print_text:
+	pusha
+	mov ah, 0eh
+.loop:
+	lodsb ;get byte from string
+	test al, al ;is byte null terminator?
+	jz .end
+	int 10h
+	jmp .loop
+.end:
+	popa ;restore registers
+	retn
+	
+reboot:
+	xor ax, ax
+	int 16h
+	xor ax, ax
+	int 19h
+	hlt ;halt cpu if reboot didnt worked
 
-DISK_ERROR:
-	CMP AX, 04H
-	JE ERR2
-	CMP AX, 05H
-	JE ERR3
-	CMP AX, 20H
-	JE ERR5
-	CMP AX, 06H
-	JE ERR1
-UNKNOWN:
-	MOV SI, DISK_ERROR_STRING.UNKNOWN
-	JMP PRINT_IT
-ERR1:
-	MOV SI, DISK_ERROR_STRING.FLOPPY_DISK_REMOVED
-	JMP PRINT_IT
-ERR2:
-	MOV SI, DISK_ERROR_STRING.SECTOR_NOT_FOUND
-	JMP PRINT_IT
-ERR3:
-	MOV SI, DISK_ERROR_STRING.RESET_FAILED
-	JMP PRINT_IT
-ERR5:
-	MOV SI, DISK_ERROR_STRING.CONTROLLER_FAILED
-	JMP PRINT_IT
-PRINT_IT:
-	CALL PRINT_TEXT
-	JMP REBOOT
+times 510-($-$$) db 0
+dw 0aa55h
 
-DISK_ERROR_STRING:
-	.SECTOR_NOT_FOUND						DB 'SECTOR NOT FOUND',0		;04
-	.RESET_FAILED							DB 'RESET FAILURE',0		;05
-	.CONTROLLER_FAILED						DB 'CONTROLLER FAILURE',0	;20
-	.UNKNOWN								DB 'DISK ERROR',0			;??
-	.FLOPPY_DISK_REMOVED					DB 'FLOPPY DISK REMOVED',0	;06
-
-TIMES 510-($-$$) DB 0
-DW 0AA55H
-
-BUFFER:
+buffer:
