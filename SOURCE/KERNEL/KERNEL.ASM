@@ -1,347 +1,317 @@
 ;=======================================================================
 ;
-;KERNEL.ASM
+;kernel.asm
 ;
-;DO I NEED TO EXPLAIN WHAT IS THIS?
+;do i need to explain what is this?
 ;
-;IS THE KERNEL, IT IS PART OF IO.ASM (TECHNICALY).
+;is the kernel, it is part of io.asm (technicaly).
 ;
-;THE ONLY FUNCTION THAT THE KERNEL DOES IS PROVIDING A NICE SHELL TO
-;EXECUTE PROGRAMS.
+;the only function that the kernel does is providing a nice shell to
+;execute programs.
 ;
 ;=======================================================================
 
-BITS 16
-ORG 0
+bits 16
+org 0
 
-FILE_DATA:
-		.FILENAME                               DB 'KERNEL' ;FILE NAME, 6 CHARACTERS
-		.EXTENSION                              DB 'SYS'        ;EXTENSION, 3 CHARATCERS
+file_data:
+		.filename					db 'KERNEL'	;file name, 6 characters
+		.extension					db 'SYS'	;extension, 3 charatcers
 		
-%DEFINE __KERNELSYS__
+%include "..\io.inc"
+		
+call_references:
+		jmp io_start												;10
+		jmp io_disk_logical_to_hts									;13
+		jmp io_disk_read_file										;16
+		jmp io_disk_reset											;19
+		jmp io_display_clear_text_screen							;22
+		jmp io_display_disable_text_mode_cursor						;25
+		jmp io_display_enable_text_mode_cursor						;28
+		jmp io_display_print_char									;31
+		jmp io_display_print_text									;34
+		jmp io_display_scroll_down									;37
+		jmp io_display_update_text_mode_cursor						;40
+		jmp io_keyboard_input										;43
+		jmp io_keyboard_keypress									;46
+		jmp io_memory_copy											;49
+		jmp io_memory_copy_byte										;52
+		jmp io_memory_destroy_table									;55
+		jmp io_memory_manage										;58
+		jmp io_serial_enable										;61
+		jmp io_serial_get_byte										;64
+		jmp io_serial_ldstp_get_bytes								;67
+		jmp io_serial_ldstp_send_bytes								;70
+		jmp io_serial_ports_check									;73
+		jmp io_serial_send_byte										;76
+		jmp io_serial_send_bytes									;79
+		jmp io_string_check_character_in_location					;82
+		jmp io_string_compare										;85
+		jmp io_string_copy											;88
+		jmp io_string_has_character									;91
+		jmp io_string_is_empty										;94
+		jmp io_string_lenght										;97
+		jmp io_string_replace_character								;100
+		jmp io_string_reverse										;103
+		jmp io_string_to_afpfs_filename								;106
+		jmp io_string_tokenize										;109
+		jmp io_system_reboot										;112
+		jmp io_system_timer											;115
+		
+%include "io.asm"
 
-%IFNDEF __KERNELSYS__
-		%WARNING KERNEL.SYS IS NOT DEFINED
-%ENDIF
-		
-%MACRO DEBUG 1+
-	SECTION .DATA
-%%STRING:
-	DB %1,__NEWLINE__,0
-SECTION .TEXT
-	PUSH SI
-	MOV SI, %%STRING
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-%ENDMACRO
-		
-%INCLUDE "..\IO.INC"
-%INCLUDE "..\SPECS.INC"
-		
-CALL_REFERENCES:
-		JMP __IO_START                                                                  ;000AH
-		
-%INCLUDE "IO.ASM"
+;display and video routines
+global io_display_clear_text_screen
+global io_display_enable_text_mode_cursor
+global io_display_disable_text_mode_cursor
+global io_display_print_char
+global io_display_print_text
+global io_display_scroll_down
+global io_display_update_text_mode_cursor
 
-GLOBAL __IO_DEVICE_PS2_ERROR
-GLOBAL __IO_DEVICE_PS2_INITIALIZE
-GLOBAL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER
-GLOBAL __IO_DEVICE_PS2_READ_BYTE_DEVICE
-GLOBAL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-GLOBAL __IO_DEVICE_PS2_SEND_BYTE_TO_FIRST_DEVICE
-GLOBAL __IO_DEVICE_PS2_SEND_BYTE_TO_SECOND_DEVICE
+;keyboard and input routines
+global io_keyboard_input
+global io_keyboard_keypress
 
-GLOBAL __IO_DISK_ERROR
-GLOBAL __IO_DISK_LOAD_FILE
-GLOBAL __IO_DISK_LOGICAL_SECTOR_TO_HTS
-GLOBAL __IO_DISK_RESET
-GLOBAL __IO_DISPLAY_CLEAR_TEXT_SCREEN
-GLOBAL __IO_DISPLAY_ENABLE_TEXT_MODE_CURSOR
-GLOBAL __IO_DISPLAY_DISABLE_TEXT_MODE_CURSOR
-GLOBAL __IO_DISPLAY_PRINT_CHAR
-GLOBAL __IO_DISPLAY_PRINT_TEXT
-GLOBAL __IO_DISPLAY_SCROLL_DOWN
-GLOBAL __IO_DISPLAY_UPDATE_TEXT_MODE_CURSOR
-GLOBAL __IO_KEYBOARD_INPUT
-GLOBAL __IO_KEYBOARD_KEYPRESS
-GLOBAL __IO_SERIAL_ENABLE
-GLOBAL __IO_SERIAL_GET_BYTE
-GLOBAL __IO_SERIAL_PORTS_CHECK
-GLOBAL __IO_SERIAL_SEND_BYTE
-GLOBAL __IO_SERIAL_SEND_BYTES
-GLOBAL __IO_MEMORY_COPY
-GLOBAL __IO_MEMORY_COPY_BYTE
-GLOBAL __IO_MEMORY_DESTROY_TABLE
-GLOBAL __IO_MEMORY_MANAGE
-GLOBAL __IO_STRING_CHECK_CHARACTER_IN_LOCATION
-GLOBAL __IO_STRING_COMPARE
-GLOBAL __IO_STRING_COPY
-GLOBAL __IO_STRING_HAS_CHARACTER
-GLOBAL __IO_STRING_IS_EMPTY
-GLOBAL __IO_STRING_LENGHT
-GLOBAL __IO_STRING_REPLACE_CHARACTER
-GLOBAL __IO_STRING_REVERSE
-GLOBAL __IO_STRING_TOKENIZE
-GLOBAL __IO_STRING_TO_AFPFS_FILENAME
-GLOBAL __IO_SYSTEM_REBOOT
-GLOBAL __IO_SYSTEM_TIMER
-		
-__IO_START:
-	CLI ;FLUSH INTERRUPTS
-	XOR AX, AX ;SET STACK
-	MOV SS, AX ;POINT AT STACK ELEMENT 0
-	MOV SP, 0FFFFH ;STACK IS PLACED AT THE END OF OUR SEGMENT'S ADDRESS
-	STI ;RESTORE INTERRUPTS
-	CLD ;GO UP IN THE RAM
-	MOV AX, __KERNEL__ ;AFTER THIS WE SHOULDNT
-	MOV DS, AX ;BOTHER ABOUT SEGMENTS ANYMORE
-	MOV ES, AX ;WELL, NOT YET
-	MOV FS, AX
-	MOV GS, AX
-	TEST DL, DL
-	JMP .__SUBFUNC_OLD
-	MOV [__DATA_DRIVE_NUMBER], DL ;SAVE DEVICE NUMBER
-	PUSH ES
-	MOV AH, 8
-	INT 13H
-	POP ES
-	AND CX, 3FH
-	MOV [__DATA_SECTORS_PER_TRACK], CX
-	MOVZX DX, DH
-	ADD DX, 1
-	MOV [__DATA_SIDES], DX
-.__SUBFUNC_OLD:
-	XOR EAX, EAX
-;KERNEL INIT
-;THIS LABEL INDICATES WHEN THE
-;NAME AND THE VERSION OF LEAFDOS ARE SHOWN
-__IO_KERNEL_POST_START:
-	;BOCHS LEAVES STUFF ON SCREEN
-	;SO WE MUST CLEAN IT TO MAKE BOCHS
-	;HAPPY >:(
-	MOV AH, 01BH
-	MOV AL, ' '
-	CALL __IO_DISPLAY_CLEAR_TEXT_SCREEN
-	
-	MOV SI, __TEXT_DOS_NAME ;PRINT OS NAME AND VERSION
-	CALL __IO_DISPLAY_PRINT_TEXT
-	PUSHA
-	MOV AL, ' ' ;SPACE BETWEN VERSION AND NAME
-	CALL __IO_DISPLAY_PRINT_CHAR
-	POPA
-	MOV SI, __TEXT_DOS_VERSION ;VERSION
-	CALL __IO_DISPLAY_PRINT_TEXT
-	
-	PUSH AX
-	MOV AL, __NEWLINE__
-	CALL __IO_DISPLAY_PRINT_CHAR
-	POP AX
-		
-	;DISPLAY THAT IO EXISTS
-	MOV SI, __TEXT_IO_NAME
-	CALL __IO_DISPLAY_PRINT_TEXT
-	MOV AL, ' '
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV SI, __TEXT_IO_VERSION
-	CALL __IO_DISPLAY_PRINT_TEXT
-	
-	PUSH AX
-	MOV AL, __NEWLINE__
-	CALL __IO_DISPLAY_PRINT_CHAR
-	POP AX
-	
-	;INITIALIZE PS/2 DEVICES
-	;CALL __IO_DEVICE_PS2_INITIALIZE_DEVICES
-	CALL __IO_DEVICE_PS2_INITIALIZE
-	
-__IO_KERNEL_MAIN:
-	PUSH AX
-	MOV AL, __NEWLINE__
-	CALL __IO_DISPLAY_PRINT_CHAR
-	POP AX
+;serial routines
+global io_serial_enable
+global io_serial_get_byte
+global io_serial_ports_check
+global io_serial_send_byte
+global io_serial_send_bytes
 
-	;DUMP SOME STUFF TO THE SERIAL
-	PUSH AX
-	PUSH CX
-	PUSH ES
-	PUSH SI
-	PUSH DX
-	MOV SI, 0
-	MOV CX, 5000
-	MOV DX, __IO_ADDRESS_COM1
-	CALL __IO_SERIAL_SEND_BYTES
-	POP DX
-	POP SI
-	POP ES
-	POP CX
-	POP AX
-	
-	PUSH AX
-	PUSH SI
-	
-	MOV AH, 07H
-	MOV AL, 'A' ;(A+DEV_NUM) = A OR B
-	ADD AL, BYTE [__DATA_DRIVE_NUMBER]
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV SI, __TEXT_DRIVE_LETTER
-	CALL __IO_DISPLAY_PRINT_TEXT
-	
-	POP SI
-	POP AX
+;memory routines
+global io_memory_copy
+global io_memory_copy_byte
+global io_memory_destroy_table
+global io_memory_manage
 
-	PUSH BX
-	MOV BL, [__DATA_TEXT_X]
-	MOV BH, [__DATA_TEXT_Y]
-	CALL __IO_DISPLAY_UPDATE_TEXT_MODE_CURSOR
-	POP BX
+;string routines
+global io_string_check_character_in_location
+global io_string_compare
+global io_string_copy
+global io_string_has_character
+global io_string_is_empty
+global io_string_lenght
+global io_string_replace_character
+global io_string_reverse
+global io_string_tokenize
+global io_string_to_afpfs_filename
 
-	PUSH_ALL
-	MOV CH, 10 ;LIMIT IS 9 CHARACTERS
-	MOV DI, __DATA_KEYBOARD_BUFFER ;KEYBOARD BUFFER IS KEYBOARD BUFFER
-	CALL __IO_KEYBOARD_INPUT ;GET KEYBOARD INPUT
-	MOV SI, __DATA_KEYBOARD_BUFFER ;BLANK LINES ARE IGNORED
-	LODSB
-	CMP AL, 31 ;ANYTHING BELOW SPACE CHAR IS BLANK LINE
-	JLE __IO_KERNEL_MAIN
-	POP_ALL
+;system routines
+global io_system_reboot
+global io_system_timer
 		
-	PUSH SI
-	PUSH AX
-	MOV AL, __NEWLINE__
-	CALL __IO_DISPLAY_PRINT_CHAR
-	POP AX
-	MOV SI, __DATA_KEYBOARD_BUFFER
-	MOV CX, 9
-	MOV DX, __IO_ADDRESS_COM1
-	CALL __IO_SERIAL_SEND_BYTES
-	POP SI
+io_start:
+	cli ;flush interrupts
+	xor ax, ax ;set stack
+	mov ss, ax ;point at stack element 0
+	mov sp, 0ffffh ;stack is placed at the end of our segment's address
+	sti ;restore interrupts
+	cld ;go up in the ram
+	mov ax, __kernel__ ;after this we shouldnt
+	mov ds, ax ;bother about segments anymore
+	mov es, ax ;well, not yet
+	mov fs, ax
+	mov gs, ax
+	
+	push di
+	push es
+	
+	test dl, dl ;is dl zero?
+	jz short .old
+	
+	xor di, di
+	mov es, di
+	
+	mov [disk_drive_number], dl ;save device number
+	mov ah, 08h
+	int 13h
+	and cx, 3fh
+	mov [disk_sectors_per_track], cx
+	movzx dx, dh
+	add dx, 1
+	mov [disk_sides], dx
+.old:
+	xor eax, eax ;needed for older bioses
+	
+	pop es
+	pop di
+;kernel init
+;this label indicates when the
+;name and the version of leafdos are shown
+io_kernel_post_start:
+	;initialize data
+	
+	;bochs leaves stuff on screen
+	;so we must clean it to make bochs
+	;happy >:(
+	mov ah, 01bh
+	mov al, ' '
+	call io_display_clear_text_screen
+	
+	mov si, text_dos_name ;print os name and version
+	call io_display_print_text
+	pusha
+	mov al, ' ' ;space betwen version and name
+	call io_display_print_char
+	popa
+	mov si, text_dos_version ;version
+	call io_display_print_text
+	
+	push ax
+	mov al, __newline__
+	call io_display_print_char
+	pop ax
 		
-	PUSH_INDEXES
-	MOV SI, __DATA_KEYBOARD_BUFFER ;CONVERT KEYBOARD BUFFER INTO
-	MOV DI, __DATA_PROGRAM_TO_LOAD ;A USEFUL FILENAME
-	CALL __IO_STRING_TO_AFPFS_FILENAME
-	POP_INDEXES
-		
-	;IS IT THE KERNEL?
-	;PUSH_INDEXES ;KERNEL DOSENT EXISTS.
-	;MOV SI, __DATA_PROGRAM_TO_LOAD ;JUST KIDDING
-	;MOV DI, __TEXT_KERNEL_FILENAME ;IT DOES
-	;CALL __IO_STRING_COMPARE ;BUT THE USER IS TRICKED
-	;JC .__SUBFUNC_NOT_FOUND
-	;POP_INDEXES
+	;display that io exists
+	mov si, text_io_name
+	call io_display_print_text
+	mov al, ' '
+	call io_display_print_char
+	mov si, text_dos_version
+	call io_display_print_text
+	
+	push ax
+	mov al, __newline__
+	call io_display_print_char
+	pop ax
+	
+	mov dx, io_address_com1
+	call io_serial_enable
+	
+	mov dx, io_address_com1
+	mov si, text_kernel_filename
+	mov cx, 9
+	call io_serial_send_bytes
+	
+io_kernel_main:
+	push ax
+	mov al, __newline__
+	call io_display_print_char
+	pop ax
+	
+	push ax
+	push si
+	
+	mov ah, 07h
+	mov al, 'A' ;(a+dev_num) = a or b
+	add al, byte [disk_drive_number]
+	call io_display_print_char
+	mov si, text_drive_letter
+	call io_display_print_text
+	
+	pop si
+	pop ax
 
-	MOV SI, __DATA_PROGRAM_TO_LOAD ;LOAD OUR PROGRAM
-	MOV AX, __PROGRAM__
-	CALL __IO_DISK_LOAD_FILE
-	JNC .__SUBFUNC_LOAD_BINARY
-	JMP .__SUBFUNC_NOT_FOUND
-.__SUBFUNC_LOAD_BINARY:
-	MOV AX, __PROGRAM__     ;MAKE SEGMENTS POINT TO THE PROGRAM
-	MOV ES, AX              ;EXTENDED SEGMENT...
-	MOV DS, AX              ;DATA SEGMENT
-	MOV GS, AX              ;ETC...
-	MOV FS, AX
-		
-	XOR AX, AX      ; <- RETURN VALUE FOR PROGRAMS
-	XOR BX, BX
-	XOR CX, CX
-	XOR DX, DX
-	XOR SI, SI
-	XOR DI, DI
-		
-	CALL __PROGRAM__:__AFPFS_DEFAULT__
-		
-	MOV AX, __KERNEL__      ;ALL LEAF DOS PROGRAMS RESETS SEGMENTS
-	MOV ES, AX                      ;OR MODIFIES THEM IN A WAY THAT THE KERNEL
-	MOV DS, AX                      ;COULD CRASH, SO WE HAVE TO RESTORE
-	MOV GS, AX                      ;SEGMENTS FOR OUR KERNEL
-	MOV FS, AX
-	JMP __IO_KERNEL_MAIN
-		
-.__SUBFUNC_NOT_FOUND:
-	MOV AL, '<'
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV SI, __DATA_PROGRAM_TO_LOAD
-	CALL __IO_DISPLAY_PRINT_TEXT
-	MOV AL, '>'
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV AL, 20H
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV SI, __TEXT_ERROR_UNKNOWN_COMMAND
-	CALL __IO_DISPLAY_PRINT_TEXT
-	JMP __IO_KERNEL_MAIN
-	
-SECTION .TEXT
-	;KERNEL GENERAL MESSAGES
-	__TEXT_KERNEL_FILENAME									DB 'KERNELSYS',0 ;PREVENT USER FROM LOADING KERNEL
-	__TEXT_DOS_NAME											DB 'LDOS',0 ;DOS NAME
-	__TEXT_DOS_VERSION										DB '0.1.6',0 ;DOS VERSION
-	__TEXT_ERROR_UNKNOWN_COMMAND							DB 'IS NOT A COMMAND OR FILE',0
-	__TEXT_IO_VERSION										DB '0.1.6',0 ;IO VERSION
-	__TEXT_IO_NAME											DB 'IO LIB',0 ;IO NAME
-	__TEXT_DRIVE_LETTER										DB ':\>',0
-	;DISK DRIVER ERROR MESSAGES
-	__TEXT_DISK_ERROR_INVALID_COMMAND						DB 'INVALID COMMAND',__NEWLINE__,0							;01
-	__TEXT_DISK_ERROR_ADDRESS_MARK_NOT_FOUND				DB 'ADDRESS MARK NOT FOUND',__NEWLINE__,0					;02
-	__TEXT_DISK_ERROR_WRITE_PROTECTED						DB 'DISK IS WRITE PROTECTED',__NEWLINE__,0					;03
-	__TEXT_DISK_ERROR_SECTOR_NOT_FOUND						DB 'SECTOR NOT FOUND',__NEWLINE__,0							;04
-	__TEXT_DISK_ERROR_RESET_FAILED							DB 'DISK RESET FAILED',__NEWLINE__,0						;05
-	__TEXT_DISK_ERROR_FLOPPY_DISK_REMOVED					DB 'FLOPPY WAS REMOVED',__NEWLINE__,0						;06
-	__TEXT_DISK_ERROR_BAD_PARAMETER_TABLE					DB 'BAD DISK PARAMETER TABLE',__NEWLINE__,0					;07
-	__TEXT_DISK_ERROR_DMA_OVERRUN							DB 'DMA OVERRUN',__NEWLINE__,0								;08
-	__TEXT_DISK_ERROR_DMA_CROSSED_64K						DB 'DMA CROSSED 64KB BOUNDARY',__NEWLINE__,0				;09
-	__TEXT_DISK_ERROR_BAD_SECTOR_FLAG						DB 'BAD SECTOR FLAG SET',__NEWLINE__,0						;0A
-	__TEXT_DISK_ERROR_BAD_TRACK_FLAG						DB 'BAD TRACK FLAG SET',__NEWLINE__,0						;0B
-	__TEXT_DISK_ERROR_MEDIA_TYPE_NOT_FOUND					DB 'MEDIA NOT FOUND',__NEWLINE__,0							;0C
-	__TEXT_DISK_ERROR_INVALID_NUMBER_OF_SECTORS				DB 'INVALID NUMBER OF SECTORS',__NEWLINE__,0				;0D
-	__TEXT_DISK_ERROR_CONTROL_DATA_ADDRESS_MARK				DB 'CONTROL ADDRESS MARK DETECTED',__NEWLINE__,0			;0E
-	__TEXT_DISK_ERROR_DMA_ARBITRATION_LEVEL_OUT_OF_RANGE	DB 'DMA ARBITRATION LEVEL OUT OF RANGE',__NEWLINE__,0		;0F
-	__TEXT_DISK_ERROR_UNCORRECTABLE_CRC_ECC_DATA_ERROR		DB 'UNCORRECTABLE CRC/ECC DATA ERROR',__NEWLINE__,0			;10
-	__TEXT_DISK_ERROR_ECC_CORRECTED_DATA_ERROR				DB 'ECC CORRECTED DATA ERROR',__NEWLINE__,0					;11
-	__TEXT_DISK_ERROR_CONTROLLER_FAILED						DB 'CONTROLLER FAILED',__NEWLINE__,0						;20
-	__TEXT_DISK_ERROR_SEEK_FAILED							DB 'SEEK FAILURE',__NEWLINE__,0								;40
-	__TEXT_DISK_ERROR_DISK_TIME_OUT							DB 'DISK TIMEOUT',__NEWLINE__,0								;80
-	__TEXT_DISK_ERROR_DRIVE_NOT_READY						DB 'DRIVE NOT READY',__NEWLINE__,0							;AA
-	__TEXT_DISK_ERROR_UNDEFINED_ERROR						DB 'UNDEFINED ERROR',__NEWLINE__,0							;BB
-	__TEXT_DISK_ERROR_WRITE_FAULT							DB 'WRITE FAULT',__NEWLINE__,0								;CC
-	__TEXT_DISK_ERROR_STATUS_REGISTER_ERROR					DB 'STATUS_REGISTER ERROR',__NEWLINE__,0					;E0
-	__TEXT_DISK_ERROR_SENSE_OPERATION_FAILED				DB 'SENSE OPERATION FAILED',__NEWLINE__,0					;FF
-	__TEXT_DISK_ERROR_UNKNOWN								DB 'UNKNOWN DISK ERROR',__NEWLINE__,0						;??
-	;PS/2 DRIVER MESSAGES
-	__TEXT_ERROR_PS2_TIMEOUT								DB 'PS/2 DEVICE TIMEOUT',__NEWLINE__,0
-	__TEXT_ERROR_PS2_BAD_ACK								DB 'PS/2 DEVICE SENT BAD ACK BYTE',__NEWLINE__,0
-	__TEXT_ERROR_PS2_SELF_TEST								DB 'PS/2 CONTROLLER SELF TEST FAILED',__NEWLINE__,0
-	__TEXT_ERROR_PS2_PORT_ONE_FAILED_TEST					DB 'PS/2 FIRST PORT FAILED TESTS',__NEWLINE__,0
-	__TEXT_ERROR_PS2_PORT_TWO_FAILED_TEST					DB 'PS/2 SECOND PORT FAILED TESTS',__NEWLINE__,0
-	__TEXT_ERROR_PS2_BAD_CONTROLLER_REPLY					DB 'PS/2 CONTROLLER RETURNED BAD REPLY',__NEWLINE__,0
-	;PS/2 DEVICE TYPE
-	__TEXT_PS2_DEVICE_STANDARD_PS2_MOUSE					DB 'STANDARD PS/2 MOUSE',__NEWLINE__,0
-	__TEXT_PS2_DEVICE_MOUSE_WITH_SCROLL						DB 'PS/2 MOUSE WITH SCROLL WHELL',0
-	__TEXT_PS2_DEVICE_5_BUTTON_MOUSE						DB '5-BUTTON PS/2 MOUSE',__NEWLINE__,0
-	__TEXT_PS2_DEVICE_MF2_KEYBOARD							DB 'MF2 PS/2 KEYBOARD',__NEWLINE__,0
-	__TEXT_PS2_DEVICE_MF2_KEYBOARD_TRANS					DB 'MF2 PS/2 KEYBOARD WITH TRANSLATION SUPPORT',__NEWLINE__,0
-	__TEXT_PS2_DEVICE_AT_KEYBOARD							DB 'IBM AT PS/2 KEYBOARD',__NEWLINE__,0
-	__TEXT_PS2_DEVICE_UNKNOWN								DB 'UNKOWN PS/2 DEVICE',__NEWLINE__,0
-	
-SECTION .DATA
-	__DATA_SECTORS_PER_TRACK								DW 18
-	__DATA_SIDES											DW 2
-	__DATA_TEXT_MODE_WIDE									DB 80
-	__DATA_TEXT_MODE_TALL									DB 25                   
-	__DATA_TEXT_MEMORY										DW 0B800H
-	__DATA_GRAPHICS_MEMORY									DW 0A000H
-	;PS/2 DRIVER DATA
-	__DATA_PORTS											DB 0
-	__DATA_PS2_DRIVER_ERROR_CODE							DB 0
-	
-SECTION .BSS
-	__DATA_TICKS_PER_SECOND									DW 0
-	__DATA_REQUESTED_TIMER									DW 0
-	__DATA_KEYBOARD_BUFFER									TIMES 11 DB 0   ;KEYBOARD BUFFER
-	__DATA_PROGRAM_TO_LOAD									TIMES 11 DB 0   ;REQUESTED PROGRAM TRANSFORMED INTO
-	__DATA_TEXT_Y											DB 0
-	__DATA_TEXT_X											DB 0
-	__DATA_DRIVE_NUMBER										DB 0
+	push bx
+	mov bl, [data_text_x]
+	mov bh, [data_text_y]
+	call io_display_update_text_mode_cursor
+	pop bx
 
-SECTION .RODATA
-	__AFPFS_EOF												DW 0FF8H
+	pusha
+	mov ch, 10 ;limit is 9 characters + arguments for program
+	mov di, data_keyboard_buffer ;keyboard buffer is keyboard buffer
+	call io_keyboard_input ;get keyboard input
+	mov si, data_keyboard_buffer ;blank lines are ignored
+	lodsb
+	cmp al, ' ' ;anything below space char is blank line
+	jle short io_kernel_main
+	popa
+	
+	push ax
+	mov al, __newline__
+	call io_display_print_char
+	pop ax
+		
+	pusha
+	mov si, data_keyboard_buffer ;convert keyboard buffer into
+	mov di, data_program_to_load ;a useful filename
+	call io_string_to_afpfs_filename
+	popa
+		
+	;is it the kernel?
+	push si
+	push di ;kernel dosent exists.
+	mov si, data_program_to_load ;just kidding
+	mov di, text_kernel_filename ;it does
+	call io_string_compare ;but the user is tricked
+	jc short .not_found
+	pop di
+	pop si
+	
+	mov si, data_program_to_load ;prepare to find file...
+	mov ax, __program__
+	call io_disk_read_file
+	jnc short .load_binary
+	
+	jmp short .not_found
+	
+.load_binary:
+	mov ax, __program__     ;make segments point to the program
+	mov es, ax              ;extended segment...
+	mov ds, ax              ;data segment
+	mov gs, ax              ;etc...
+	mov fs, ax
+		
+	xor ax, ax      ; <- return value for programs
+	xor bx, bx
+	xor cx, cx
+	xor dx, dx
+	xor si, si
+	xor di, di
+		
+	call __program__:__afpfs_default__
+		
+	mov ax, __kernel__      ;all leaf dos programs resets segments
+	mov es, ax                      ;or modifies them in a way that the kernel
+	mov ds, ax                      ;could crash, so we have to restore
+	mov gs, ax                      ;segments for our kernel
+	mov fs, ax
+	jmp io_kernel_main
+		
+.not_found:
+	mov al, '<'
+	call io_display_print_char
+	mov si, data_program_to_load
+	call io_display_print_text
+	mov al, '>'
+	call io_display_print_char
+	mov al, 20h
+	call io_display_print_char
+	mov si, text_error_unknown_command
+	call io_display_print_text
+	
+	jmp io_kernel_main
+	
+	;kernel general messages
+	text_kernel_filename								db 'kernelsys',0 ;prevent user from loading kernel
+	text_dos_name										db 'Leaf DOS',0 ;dos name
+	text_error_unknown_command							db 'is not a kernel command or a executable program.',0
+	text_dos_version									db '0.1.7 beta',0 ;io and dos version
+	text_io_name										db 'IO Library',0 ;io name
+	text_drive_letter									db ':\rootdir\>',0
+	
+	;data
+	data_sectors_per_track								dw 18
+	data_sides											dw 2
+	data_text_mode_wide									db 80
+	data_text_mode_tall									db 25                   
+	data_text_memory									dw 0b800h
+	data_graphics_memory								dw 0a000h
+	
+	;disk data
+	disk_drive_number									db 0
+	disk_sectors_per_track								db 18
+	disk_sides											db 2
+	
+	;miscellaneous data
+	data_ticks_per_second								dw 0
+	data_requested_timer								dw 0
+	data_keyboard_buffer								times 11 db 0   ;keyboard buffer
+	data_program_to_load								times 11 db 0   ;requested program transformed into
+	data_text_y											db 0
+	data_text_x											db 0
+	
+	afpfs_eof											dw 0ff8h

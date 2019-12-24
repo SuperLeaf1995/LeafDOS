@@ -1,1585 +1,1144 @@
 ;=======================================================================
 ;
-;IO.LIB / IO.ASM
+;io.lib / io.asm
 ;
-;IO (INPUT-OUTPUT) LIBRARY IS THE IN BUILT LIBRARY OF THE KERNEL, THIS
-;LIBRARY IS PART OF LDOS'S KERNEL, MANAGES EVERYTHING FROM KEYBOARD
-;TO DISPLAY, AND EVEN THE SERIAL PORTS.
+;io (input-output) library is the in built library of the kernel, this
+;library is part of ldos's kernel, manages everything from keyboard
+;to display, and even the serial ports.
 ;
-;IT ALSO FEEDS THE PROGRAMS WITH FUNCTIONS THEY CAN USE, FOR EXAMPLE
-;__IO_DISPLAY_PRINT_TEXT.
+;it also feeds the programs with functions they can use, for example
+;io_display_print_text.
 ;
-;THE FORMAT FOR EACH FUNCTION NAME IS THE FOLLOWS:
+;the format for each function name is the follows:
 ;
-;__IO + GROUP + NAME
-;
-;IO NOT ONLY PROVIDES FUNCTIONS, BUT ALSO ADDRESSES AND MACROS, SUCH AS
-;PUSH_ALL/POP_ALL, __IO_PS2_COMMAND_REGISTER, ETC.
+;io + group + name
 ;
 ;=======================================================================
 	
-;IN = N/A
-;OUT = AL: 0 IF CLEAR, 1 IF NOT CLEAR (OCCUPIED?)
-__IO_DEVICE_PS2_CHECK_INPUT_BUFFER:
-	PUSH DX
+;in = ax: logical sector
+;out = cl: sector, dh: head, ch: track, dl: drive
+io_disk_logical_to_hts:
+	push bx
+	push ax
 	
-	MOV DX, __IO_ADDRESS_PS2_STATUS_REGISTER
-	IN AL, DX
-	TEST AL, 00000001B
-	JNZ .__SUBFUNC_INPUT_CLEAR
-.__SUBFUNC_INPUT_NOT_CLEAR:
-	MOV AL, 1
-	JMP .__SUBFUNC_END
-.__SUBFUNC_INPUT_CLEAR:
-	MOV AL, 0
-.__SUBFUNC_END:
-	POP DX
-	RET
+	mov bx, ax ;save logical sector
 	
-;IN = N/A
-;OUT = AL: 0 IF CLEAR, 1 IF NOT CLEAR (OCCUPIED?)
-__IO_DEVICE_PS2_CHECK_OUTPUT_BUFFER:
-	PUSH DX
+	xor dx, dx
+	div word [disk_sectors_per_track]
+	inc dl ;sectors are nonzero
+	mov cl, dl ;cl is for sectors
 	
-	MOV DX, __IO_ADDRESS_PS2_STATUS_REGISTER
-	IN AL, DX
-	TEST AL, 00000010B
-	JZ .__SUBFUNC_OUTPUT_CLEAR
-.__SUBFUNC_OUTPUT_NOT_CLEAR:
-	MOV AL, 1
-	JMP .__SUBFUNC_END
-.__SUBFUNC_OUTPUT_CLEAR:
-	MOV AL, 0
-.__SUBFUNC_END:
+	mov ax, bx
+	xor dx, dx ;calculate head
+	div word [disk_sectors_per_track]
 	
-	POP DX
-	RET
+	xor dx, dx
+	div word [disk_sides]
+	mov dh, dl ;heads/side
+	mov ch, al ;track
 	
-;IN = N/A
-;OUT = BX: NUMBER OF DEVICES
-__IO_DEVICE_PS2_INITIALIZE:
-	;DISABLE DEVICES
-	MOV AL, 0ADH ;RESET FIRST PS/2 DEVICE
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	MOV AL, 0A7H ;RESET SECOND
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER ;NON-DUAL CHANNEL CONTROLLER WILL IGNORE COMMAND A7H
+	pop ax ;restore ax and bx
+	pop bx
 	
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT ;FLUSH OUTPUT BUFFER
-	IN AL, DX ;BY WRITING WITHOUT CHECKING STATUS REGISTER
+	mov dl, byte [disk_drive_number] ;save device number
+	ret
 	
-	MOV AL, 020H ;GET COMMAND BYTE
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER ;GET REPLY FROM COMMAND
-	XOR AL, 01000011B ;DISABLE IRQ AND TRANSLATION
-	MOV AH, AL
-	MOV AL, 060H ;SET NEW CONFIGURATION
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER ;SEND NEW CONFIG. BYTE
-	MOV AL, AH ;CONFIGURATION
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER ;SEND NEW CONFIG. BYTE
-	
-	TEST AL, 00100000B ;IS PS/2 DUAL?
-	JNZ .__SUBFUNC_DUAL_CHANNEL
-.__SUBFUNC_SINGLE_CHANNEL: ;ONLY ONE PORT
-	MOV BX, 1
-	JMP .__SUBFUNC_PERFORM_SELF_TEST
-.__SUBFUNC_DUAL_CHANNEL: ;TWO PORTS
-	MOV BX, 2
-.__SUBFUNC_PERFORM_SELF_TEST:
-	MOV AL, 0AAH
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER ;DO SELF TEST
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER ;GET RESULT
-	CMP AL, 0FCH
-	JE .__SUBFUNC_ERROR_CONTROLLER_SELF_TESTS
-	;CMP AL, 055H
-	;JNE .__SUBFUNC_ERROR_CONTROLLER_RETURNED_BAD_REPLY
-	
-	CMP BX, 2
-	JE .__SUBFUNC_CONFIRM_DUAL_CHANNEL
-	JMP .__SUBFUNC_INTERFACE_TESTS
-.__SUBFUNC_CONFIRM_DUAL_CHANNEL:
-	MOV AL, 0A8H
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	MOV AL, 020H ;GET COMMAND BYTE
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER ;GET REPLY
-	TEST AL, 00100000B
-	JNZ .__SUBFUNC_DEFINITELY_A_DUAL_CHANNEL
-	JMP .__SUBFUNC_DEFINITELY_NOT_A_DUAL_CHANNEL
-.__SUBFUNC_DEFINITELY_A_DUAL_CHANNEL:
-	;NO NEED TO DO ANYTHING, EXCEPT DISABLING THE SECOND PS/2 DRIVER
-	MOV AL, 0A7H ;DISABLE SECOND PS/2 CONTROLLER
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	JMP .__SUBFUNC_INTERFACE_TESTS
-.__SUBFUNC_DEFINITELY_NOT_A_DUAL_CHANNEL:
-	MOV BX, 1 ;ONLY ONE CHANNEL
-	
-	;TODO: IF THE FIRST PORT FAILS, RELY ON THE SECOND, AND VICEVERSA
-	
-.__SUBFUNC_INTERFACE_TESTS:
-	MOV AL, 0ABH
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER
-	CMP AL, 0
-	JNE .__SUBFUNC_ERROR_PORT_ONE_FAILED_TEST
-	
-	;NOW CHECK PORT 2 IF ITS A DUAL CHANNEL PS/2
-	CMP BX, 2 ;SHOULD NOT BYPASS THIS IF IT IS A SINGLE CHANNEL PS/2
-	JNE .__SUBFUNC_ENABLE_DEVICES
-	
-	MOV AL, 0A9H
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	CALL __IO_DEVICE_PS2_READ_BYTE_CONTROLLER
-	CMP AL, 0
-	JNE .__SUBFUNC_ERROR_PORT_TWO_FAILED_TEST
-.__SUBFUNC_ENABLE_DEVICES:
-	MOV AL, 0AEH
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-	CMP BX, 2
-	JNE .__SUBFUNC_RESET_DEVICES
-	;IF THERE ARE DUAL PORTS, THEN WE ALSO RESET THE SECOND PORT
-	MOV AL, 0A8H
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER
-.__SUBFUNC_RESET_DEVICES:
-	MOV AL, 0FFH ;RESET FIRST DEVICE
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_FIRST_DEVICE
-	
-	CMP BX, 2
-	JNE .__SUBFUNC_END
-	
-	MOV AL, 0FFH ;AND THE SECOND (IF PRESENT)
-	CALL __IO_DEVICE_PS2_SEND_BYTE_TO_SECOND_DEVICE
-	
-.__SUBFUNC_END: ;FINISH
-	RET
-	
-;IF ERRORS OCCOURRED...
-.__SUBFUNC_ERROR_PORT_ONE_FAILED_TEST:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_PORT_ONE_FAILED_TEST
-	JMP .__SUBFUNC_END
-.__SUBFUNC_ERROR_PORT_TWO_FAILED_TEST:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_PORT_TWO_FAILED_TEST
-	JMP .__SUBFUNC_END
-.__SUBFUNC_ERROR_CONTROLLER_SELF_TESTS:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_CONTROLLER_SELF_TESTS
-	JMP .__SUBFUNC_END
-.__SUBFUNC_ERROR_CONTROLLER_RETURNED_BAD_REPLY:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_CONTROLLER_RETURNED_BAD_REPLY
-	JMP .__SUBFUNC_END
-	
-;IN = N/A
-;OUT = N/A
-__IO_DEVICE_PS2_ERROR:
-.__SUBFUNC_ERROR_TIMEOUT:
-	PUSH SI
-	MOV SI, __TEXT_ERROR_PS2_TIMEOUT
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-	STC
-	RET
-.__SUBFUNC_ERROR_CONTROLLER_RETURNED_BAD_REPLY:
-	PUSH SI
-	MOV SI, __TEXT_ERROR_PS2_BAD_CONTROLLER_REPLY
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-	STC
-	RET
-.__SUBFUNC_ERROR_CONTROLLER_SELF_TESTS:
-	PUSH SI
-	MOV SI, __TEXT_ERROR_PS2_SELF_TEST
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-	STC
-	RET
-.__SUBFUNC_ERROR_PORT_ONE_FAILED_TEST:
-	PUSH SI
-	MOV SI, __TEXT_ERROR_PS2_PORT_ONE_FAILED_TEST
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-	STC
-	RET
-.__SUBFUNC_ERROR_PORT_TWO_FAILED_TEST:
-	PUSH SI
-	MOV SI, __TEXT_ERROR_PS2_PORT_TWO_FAILED_TEST
-	CALL __IO_DISPLAY_PRINT_TEXT
-	POP SI
-	STC
-	RET
-	
-;IN = N/A
-;OUT = AL: BYTE READ
-__IO_DEVICE_PS2_READ_BYTE_CONTROLLER:
-	PUSHA
-.__SUBFUNC_WAIT_READ:
-	
-	CALL __IO_DEVICE_PS2_CHECK_INPUT_BUFFER
-	
-	CMP AL, 0
-	JE .__SUBFUNC_READ
-	
-	JMP .__SUBFUNC_WAIT_READ
-.__SUBFUNC_READ:
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT
-	IN AL, DX
-	MOV BYTE [.__DATA_READ_DATA], AL
-.__SUBFUNC_PS2_END:
-	POPA
-	MOV AL, BYTE [.__DATA_READ_DATA]
-	RET
-	
-	.__DATA_READ_DATA	DB 0
-	
-;IN = N/A
-;OUT = AL: READ BYTE
-__IO_DEVICE_PS2_READ_BYTE_DEVICE:
-	PUSHA
-	
-	XOR CX, CX
-.__SUBFUNC_WAIT:
-	CMP CX, 3 ;MANY TRIES = BAIL OUT
-	JGE SHORT .__SUBFUNC_ERROR_TIMEOUT
-	
-	MOV AX, 10 ;WAIT 3 SECONDS BETWEN EACH TRY
-	CALL __IO_SYSTEM_TIMER
-	
-	CALL __IO_DEVICE_PS2_CHECK_INPUT_BUFFER
-	
-	CMP AL, 0
-	JE SHORT .__SUBFUNC_READ
-	
-	INC CX ;NO, INCREMENT CX
-	JMP SHORT .__SUBFUNC_WAIT
-.__SUBFUNC_READ:
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT
-	IN AL, DX
-	MOV BYTE [.__DATA_READ_DATA], AL
-	CLC
-.__SUBFUNC_END:
+;in = si: filename, ax: segment to load file to
+;out = cf: clear if sucess
+io_disk_read_file:
+	moV word [.filename], si
+	moV word [.segment], ax
+	moV ax, 1
+	call io_disk_logical_to_hts
+	moV si, __buffer__
+	moV bx, ds
+	moV es, bx
+	moV bx, si
+	moV ah, 2
+	moV al, 24 ;read all sectors
+	pusha
+.read_disk:
+	popa
+	pusha
+	stc
+	int 13h
+	jnc .prepare_buffer
+	call io_disk_reset ;error on disk?
+	jnc .read_disk
+	;error
+	stc
+	ret
+.prepare_buffer:
+	popa
+	pusha
+	moV ax, ds ;now it points to our buffer
+	moV es, ax
+	moV di, __buffer__
+	xor ax, ax
+	moV word [.sect], ax ;sector is zero, for now
+.find_filename:
+	add word [.sect], 1 ;add one sector per loop
+	moV cx, 512 ;read sector per sector
+.loop:
+	xchg cx, dx
+	moV si, data_program_to_load
+	moV cx, 9
+	rep cmpsb
+	je short .found_file
+	add ax, 1
+	moV di, __buffer__
+	add di, ax
+	xchg dx, cx
+	loop .loop
+	cmp word [.sect], 16 ;more than total sectors!
+	jge .not_found
+	jmp .find_filename ;another sector...
+.found_file:
+	moV ax, word [.segment] ;make es:bx to point to our load place
+	moV es, ax
+	moV bx, 0
 
-	POPA ;GET STUFF BACK IN ORDER
+	moV ax, word [.sect] ;sector where file is
+	call io_disk_logical_to_hts
 	
-	MOV AL, BYTE [.__DATA_READ_DATA]
-	RET
+	moV ah, 2 ;read from the cluster we found the filename
+	moV al, 18
 	
-.__SUBFUNC_ERROR_TIMEOUT:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_TIMEOUT
-	JMP SHORT .__SUBFUNC_END
+	stc
+	int 13h
+	jnc .end
+	call io_disk_reset ;if there is error, reset floppY
+	jmp .found_file
+.end:
+	popa
+	clc
+	ret
 	
-	.__DATA_READ_DATA	DB 0
+.not_found:
+	popa
+	stc
+	ret
 	
-;IN = AL: BYTE TO SEND
-;OUT = N/A
-__IO_DEVICE_PS2_SEND_BYTE_TO_CONTROLLER:
-	PUSHA
-	PUSH AX
-.__SUBFUNC_WAIT_SEND_CONTROLLER:
-	CALL __IO_DEVICE_PS2_CHECK_OUTPUT_BUFFER
-	CMP AL, 0 ;CHECK IF BUFFER IS CLEAR
-	JE SHORT .__SUBFUNC_SEND_CONTROLLER
-	JMP SHORT .__SUBFUNC_WAIT_SEND_CONTROLLER
-.__SUBFUNC_SEND_CONTROLLER:
-	POP AX ;GET AX BACK
-	;SEND IT
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT
-	OUT DX, AL ;SEND AL
-.__SUBFUNC_PS2_END:
-	POPA
-	RET
+	.ptr						dw 0
+	.sect						dw 0
+	.filename					dw 0
+	.segment					dw 0
 	
-;IN = AL: BYTE TO SEND
-;OUT = N/A
-__IO_DEVICE_PS2_SEND_BYTE_TO_FIRST_DEVICE:
-	PUSHA
-	PUSH AX
-	XOR CX, CX
-.__SUBFUNC_WAIT_SEND_FIRST_DEVICE:
-	CMP CX, 3
-	JGE SHORT .__SUBFUNC_ERROR_TIMEOUT
+io_disk_reset:
+	push ax
+	push dx
 	
-	MOV AX, 10 ;WAIT 3 SECONDS
-	CALL __IO_SYSTEM_TIMER
+	xor ax, ax
+	mov dl, byte [disk_drive_number]
+	stc
+	int 13h
 	
-	CALL __IO_DEVICE_PS2_CHECK_OUTPUT_BUFFER
-	CMP AL, 0
-	JE SHORT .__SUBFUNC_SEND_FIRST_DEVICE
-	
-	INC CX
-	JMP SHORT .__SUBFUNC_WAIT_SEND_FIRST_DEVICE ;ELSE WAIT MORE
-.__SUBFUNC_SEND_FIRST_DEVICE:
-	POP AX ;GET AX BACK
-	PUSH AX
-	;SEND IT
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT
-	OUT DX, AL ;SEND AL
-	CLC
-.__SUBFUNC_PS2_END:
-	POP AX
-	POPA
-	RET
-	
-.__SUBFUNC_ERROR_TIMEOUT:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_TIMEOUT
-	JMP SHORT .__SUBFUNC_PS2_END
-	
-;IN = AL: BYTE TO SEND
-;OUT = N/A
-__IO_DEVICE_PS2_SEND_BYTE_TO_SECOND_DEVICE:
-	PUSHA
-	PUSH AX
-	XOR CX, CX
-	
-	;LET KNOW THE PS/2 CONTROLLER WE GONNA STAB'A THE SECOND DEVICE
-	MOV DX, __IO_ADDRESS_PS2_COMMAND_REGISTER
-	MOV AL, 0D4H
-	OUT DX, AL
-	
-.__SUBFUNC_WAIT_SEND_SECOND_DEVICE:
-	CMP CX, 3
-	JGE SHORT .__SUBFUNC_ERROR_TIMEOUT
-	
-	MOV AX, 10 ;WAIT 3 SECONDS
-	CALL __IO_SYSTEM_TIMER
-	MOV DX, __IO_ADDRESS_PS2_STATUS_REGISTER
-	IN AL, DX
-	TEST AL, 00000010B ;CHECK IF INPUT BUFFER IS CLEAR
-	JZ SHORT .__SUBFUNC_SEND_SECOND_DEVICE ;SEND BYTE
-	INC CX
-	JMP SHORT .__SUBFUNC_WAIT_SEND_SECOND_DEVICE ;ELSE WAIT MORE
-.__SUBFUNC_SEND_SECOND_DEVICE:
-	POP AX ;GET AX BACK
-	PUSH AX
-	;SEND IT
-	MOV DX, __IO_ADDRESS_PS2_DATA_PORT
-	OUT DX, AL ;SEND AL
-	CLC
-.__SUBFUNC_PS2_END:
-	POP AX
-	POPA
-	RET
-	
-.__SUBFUNC_ERROR_TIMEOUT:
-	STC
-	CALL __IO_DEVICE_PS2_ERROR.__SUBFUNC_ERROR_TIMEOUT
-	JMP SHORT .__SUBFUNC_PS2_END
+	pop dx
+	pop ax
+	ret
 	
 ;=======================================================================
 ;
-;IO.DISK - FILESYSTEMS, CLOSE/OPEN/READ/WRITE FILES ON AFPFS SYSTEM
+;io.display - video and display routines, anything graphical
 ;
 ;=======================================================================
 	
-;IN = JMP TO SPECIFIC ERROR
-;OUT = CORRESPONDING STRING DISPLAYED
-__IO_DISK_ERROR:
-	;LETS SEE WICH ERROR WE HAVE...
-	CMP AX, 01H
-	JE .__SUBFUNC_INVALID_COMMAND
-	CMP AX, 02H
-	JE .__SUBFUNC_ADDRESS_MARK_NOT_FOUND
-	CMP AX, 03H
-	JE .__SUBFUNC_WRITE_PROTECTED
-	CMP AX, 04H
-	JE .__SUBFUNC_SECTOR_NOT_FOUND
-	CMP AX, 05H
-	JE .__SUBFUNC_RESET_FAILED
-	CMP AX, 06H
-	JE .__SUBFUNC_FLOPPY_DISK_REMOVED
-	CMP AX, 07H
-	JE .__SUBFUNC_BAD_PARAMETER_TABLE
-	CMP AX, 08H
-	JE .__SUBFUNC_DMA_OVERRUN
-	CMP AX, 09H
-	JE .__SUBFUNC_DMA_CROSSED_64K
-	CMP AX, 0AH
-	JE .__SUBFUNC_BAD_SECTOR_FLAG
-	CMP AX, 0BH
-	JE .__SUBFUNC_BAD_TRACK_FLAG
-	CMP AX, 0CH
-	JE .__SUBFUNC_MEDIA_TYPE_NOT_FOUND
-	CMP AX, 0DH
-	JE .__SUBFUNC_INVALID_NUMBER_OF_SECTORS
-	CMP AX, 0EH
-	JE .__SUBFUNC_CONTROL_DATA_ADDRESS_MARK
-	CMP AX, 0FH
-	JE .__SUBFUNC_DMA_ARBITRATION_LEVEL_OUT_OF_RANGE
-	CMP AX, 10H
-	JE .__SUBFUNC_UNCORRECTABLE_CRC_ECC_DATA_ERROR
-	CMP AX, 11H
-	JE .__SUBFUNC_ECC_CORRECTED_DATA_ERROR
-	CMP AX, 20H
-	JE .__SUBFUNC_CONTROLLER_FAILED
-	CMP AX, 40H
-	JE .__SUBFUNC_SEEK_FAILED
-	CMP AX, 80H
-	JE .__SUBFUNC_DISK_TIME_OUT
-	CMP AX, 0AAH
-	JE .__SUBFUNC_DRIVE_NOT_READY
-	CMP AX, 0BBH
-	JE .__SUBFUNC_UNDEFINED_ERROR
-	CMP AX, 0CCH
-	JE .__SUBFUNC_WRITE_FAULT
-	CMP AX, 0E0H
-	JE .__SUBFUNC_STATUS_REGISTER_ERROR
-	CMP AX, 0FFH
-	JE .__SUBFUNC_SENSE_OPERATION_FAILED
-	JMP .__SUBFUNC_UNKNOWN ;NOT ANY OF THE ABOVE? WOW, I CANT BELIEVE THAT
-	.__SUBFUNC_INVALID_COMMAND:
-		MOV SI, __TEXT_DISK_ERROR_INVALID_COMMAND
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_ADDRESS_MARK_NOT_FOUND:
-		MOV SI, __TEXT_DISK_ERROR_ADDRESS_MARK_NOT_FOUND
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_WRITE_PROTECTED:
-		MOV SI, __TEXT_DISK_ERROR_WRITE_PROTECTED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_SECTOR_NOT_FOUND:
-		MOV SI, __TEXT_DISK_ERROR_SECTOR_NOT_FOUND
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_RESET_FAILED:
-		MOV SI, __TEXT_DISK_ERROR_RESET_FAILED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_FLOPPY_DISK_REMOVED:
-		MOV SI, __TEXT_DISK_ERROR_FLOPPY_DISK_REMOVED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_BAD_PARAMETER_TABLE:
-		MOV SI, __TEXT_DISK_ERROR_BAD_PARAMETER_TABLE
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_DMA_OVERRUN:
-		MOV SI, __TEXT_DISK_ERROR_DMA_OVERRUN
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_DMA_CROSSED_64K:
-		MOV SI, __TEXT_DISK_ERROR_DMA_CROSSED_64K
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_BAD_SECTOR_FLAG:
-		MOV SI, __TEXT_DISK_ERROR_BAD_SECTOR_FLAG
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_BAD_TRACK_FLAG:
-		MOV SI, __TEXT_DISK_ERROR_BAD_TRACK_FLAG
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_MEDIA_TYPE_NOT_FOUND:
-		MOV SI, __TEXT_DISK_ERROR_MEDIA_TYPE_NOT_FOUND
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_INVALID_NUMBER_OF_SECTORS:
-		MOV SI, __TEXT_DISK_ERROR_INVALID_NUMBER_OF_SECTORS
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_CONTROL_DATA_ADDRESS_MARK:
-		MOV SI, __TEXT_DISK_ERROR_CONTROL_DATA_ADDRESS_MARK
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_DMA_ARBITRATION_LEVEL_OUT_OF_RANGE:
-		MOV SI, __TEXT_DISK_ERROR_DMA_ARBITRATION_LEVEL_OUT_OF_RANGE
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_UNCORRECTABLE_CRC_ECC_DATA_ERROR:
-		MOV SI, __TEXT_DISK_ERROR_UNCORRECTABLE_CRC_ECC_DATA_ERROR
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_ECC_CORRECTED_DATA_ERROR:
-		MOV SI, __TEXT_DISK_ERROR_ECC_CORRECTED_DATA_ERROR
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_CONTROLLER_FAILED:
-		MOV SI, __TEXT_DISK_ERROR_CONTROLLER_FAILED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_SEEK_FAILED:
-		MOV SI, __TEXT_DISK_ERROR_SEEK_FAILED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_DISK_TIME_OUT:
-		MOV SI, __TEXT_DISK_ERROR_DISK_TIME_OUT
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_DRIVE_NOT_READY:
-		MOV SI, __TEXT_DISK_ERROR_DRIVE_NOT_READY
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_UNDEFINED_ERROR:
-		MOV SI, __TEXT_DISK_ERROR_UNDEFINED_ERROR
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_WRITE_FAULT:
-		MOV SI, __TEXT_DISK_ERROR_WRITE_FAULT
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_STATUS_REGISTER_ERROR:
-		MOV SI, __TEXT_DISK_ERROR_STATUS_REGISTER_ERROR
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_SENSE_OPERATION_FAILED:
-		MOV SI, __TEXT_DISK_ERROR_SENSE_OPERATION_FAILED
-		JMP .__SUBFUNC_PRINT
-	.__SUBFUNC_UNKNOWN:
-		MOV SI, __TEXT_DISK_ERROR_UNKNOWN
-	.__SUBFUNC_PRINT:
-		CALL __IO_DISPLAY_PRINT_TEXT
-		STC
-		RET ;RETURN BACK, AND ACTUALLY SHOULD END THE MAIN CALLER SINCE
-			;THIS FUNCTION IS SUPPOSED TO BE JUMPED ON, NOT CALLED ON]
+;in = ah: color, al: character
+;out = n/a
+io_display_clear_text_screen:
+	pusha
+	push es
 	
-;IN = SI: FILENAME, AX: SEGMENT TO LOAD FILE TO
-;OUT = CF: CLEAR IF SUCESS, AX: OFFSET IN WICH TO LOAD FILE, 0 ON ERROR
-__IO_DISK_LOAD_FILE:
-	PUSH ES
-	MOV WORD [.__DATA_FILENAME], SI
-	MOV WORD [.__DATA_SEGMENT], AX
-	MOV AX, 1
-	CALL __IO_DISK_LOGICAL_SECTOR_TO_HTS
-	MOV SI, __BUFFER__
-	MOV BX, DS
-	MOV ES, BX
-	MOV BX, SI
-	MOV AH, 2
-	MOV AL, __DOS_SECTORS__ ;READ ALL SECTORS
-	PUSHA
-.__SUBFUNC_READ_DISK:
-	POPA
-	PUSHA
-	STC
-	INT 13H
-	JNC SHORT .__SUBFUNC_PREPARE_BUFFER
-	CALL __IO_DISK_RESET ;ERROR ON DISK?
-	JNC SHORT .__SUBFUNC_READ_DISK
-	;ERROR
-	STC
-	RET
-.__SUBFUNC_PREPARE_BUFFER:
-	POPA
-	PUSHA
-	MOV AX, DS ;NOW IT POINTS TO OUR BUFFER
-	MOV ES, AX
-	MOV DI, __BUFFER__
-	XOR AX, AX
-	MOV WORD [.__DATA_SECT], AX ;SECTOR IS ZERO, FOR NOW
-.__SUBFUNC_FIND_FILENAME:
-	ADD WORD [.__DATA_SECT], 1 ;ADD ONE SECTOR PER LOOP
-	MOV CX, 512 ;READ SECTOR PER SECTOR
-.__SUBFUNC_LOOP:
-	XCHG CX, DX
-	MOV SI, __DATA_PROGRAM_TO_LOAD
-	MOV CX, 9
-	REP CMPSB
-	JE SHORT .__SUBFUNC_FOUND_FILE
-	ADD WORD [.__DATA_SOF], 1 ;GET THE SOF, (WHERE FILENAME STARTS)
-	INC AX
-	MOV DI, __BUFFER__
-	ADD DI, AX
-	XCHG DX, CX
-	LOOP .__SUBFUNC_LOOP
-	CMP WORD [.__DATA_SECT], __DOS_SECTORS__ ;MORE THAN TOTAL SECTORS!
-	JGE SHORT .__SUBFUNC_NOT_FOUND
-	JMP SHORT .__SUBFUNC_FIND_FILENAME ;ANOTHER SECTOR...
-.__SUBFUNC_FOUND_FILE:
-	ADD WORD [.__DATA_SOF], 9 ;SOF+FILENAME=START OF FILE
+	mov cx, ax ;save stuff in ax
 
-	MOV AX, WORD [.__DATA_SEGMENT] ;MAKE ES:BX TO POINT TO OUR LOAD PLACE
-	MOV ES, AX
-	MOV BX, 0
+	mov ax, word [data_text_memory]
+	mov es, ax
+	xor di, di
 
-	MOV AX, WORD [.__DATA_SECT] ;SECTOR WHERE FILE IS
-	CALL __IO_DISK_LOGICAL_SECTOR_TO_HTS
+	mov ax, [data_text_mode_tall]
+	mov bx, [data_text_mode_wide]
+	mul bx
+	shl ax, 1
 	
-	MOV AH, 2 ;READ FROM THE CLUSTER WE FOUND THE FILENAME
-	MOV AL, __DOS_SECTORS__
+.loop:
+	cmp di, ax
+	je .end
 	
-	STC
-	INT 13H
-	JNC SHORT .__SUBFUNC_END
-	CALL __IO_DISK_RESET ;IF THERE IS ERROR, RESET FLOPPY
-	JMP SHORT .__SUBFUNC_FOUND_FILE
-.__SUBFUNC_END:
-	POPA
-	POP ES
-	MOV AX, WORD [.__DATA_SOF]
-	CLC
-	RET
+	mov word [es:di], cx ;repeat...
 	
-.__SUBFUNC_NOT_FOUND:
-	POPA
-	POP ES
-	XOR AX, AX
-	STC
-	RET
+	inc di ;advance by a word
+	inc di
 	
-	.__DATA_PTR						DW 0
-	.__DATA_SECT					DW 0
-	.__DATA_FILENAME				DW 0
-	.__DATA_SEGMENT					DW 0
-	.__DATA_SOF						DW 0
+	jmp .loop
+.end:
+	pop es
+	popa
+	ret
 	
-;IN = AX: LOGICAL SECTOR
-;OUT = REGS FOR INT 13
-__IO_DISK_LOGICAL_SECTOR_TO_HTS:
-	PUSH BX
-	PUSH AX
+;in = al: starting scanline, ah: ending scanline
+;out = n/a
+io_display_enable_text_mode_cursor:
+	push ax
+	push dx
 	
-	MOV BX, AX ;SAVE LOGICAL SECTOR
-	XOR DX, DX
-	DIV WORD [__DATA_SECTORS_PER_TRACK]
-	ADD DL, 01H ;SECTORS STARTS AT 1
-	MOV CL, DL ;CL IS FOR SECTORS
-	MOV AX, BX
-	XOR DX, DX ;CALCULATE HEAD
-	DIV WORD [__DATA_SECTORS_PER_TRACK]
-	XOR DX, DX
-	DIV WORD [__DATA_SIDES]
-	MOV DH, DL ;HEADS/SIDE
-	MOV CH, AL ;TRACK
+	mov byte [.data_end], ah
+	mov byte [.data_start], al
 	
-	POP AX ;RESTORE AX AND BX
-	POP BX
+	mov dx, 03d4h
 	
-	MOV DL, BYTE [__DATA_DRIVE_NUMBER] ;SAVE DEVICE NUMBER
-	RET
+	mov al, 0ah
+	;put starting scanline
+	out dx, al ;send 0a byte
+	inc dx
+	in al, dx ;get byte
+	and al, 0c0h
+	or al, [.data_start]
+	out dx, al
+	;put ending scanline
+	dec dx
+	mov al, 0bh
+	out dx, al ;send 0e byte
+	mov dx, 03e0h
+	in al, dx ;get byte
+	and al, 0e0h
+	or al, [.data_end]
+	mov dx, 03d5h
+	out dx, al
 	
-;IN = N/A
-;OUT = CARRY FLAG, CLEAR IF FAILURE
-__IO_DISK_RESET:
-	PUSH AX
-	PUSH DX
+	pop dx
+	pop ax
+	ret
 	
-	XOR AX, AX
-	MOV DL, BYTE [__DATA_DRIVE_NUMBER]
-	STC ;SET CARRY FLAG
-	INT 13H
+	.data_end		db 0
+	.data_start	db 0
 	
-	POP DX
-	POP AX
-	RET
+;in = n/a
+;out = n/a (and no more blinky :( )
+io_display_disable_text_mode_cursor:
+	pusha
 	
-;=======================================================================
-;
-;IO.DISPLAY - VIDEO AND DISPLAY ROUTINES, ANYTHING GRAPHICAL
-;
-;=======================================================================
+	mov dx, 03d4h ;send to vga register that we dont want cursor
+	mov al, 0ah
+	out dx, al
 	
-;IN = AH: COLOR, AL: CHARACTER
-;OUT = N/A
-__IO_DISPLAY_CLEAR_TEXT_SCREEN:
-	PUSHA
-	PUSH ES
+	inc dx
+	mov al, 020h
+	out dx, al
 	
-	MOV CX, AX ;SAVE STUFF IN AX
+	popa
+	ret
+	
+;in = al: chatacter
+;out = n/a
+io_display_print_char:
+	pusha
+	push es
+	
+	mov byte [.data_character], al
+	
+	;point to text memory
+	mov ax, word [data_text_memory]
+	mov es, ax
+	
+	mov ah, 1bh
+	
+	mov cx, ax ;save ax in cx
+	
+	movzx ax, byte [data_text_y] ;y to ax
+	movzx dx, byte [data_text_mode_wide]
+	mul dx
+	shl ax, 1
+	
+	movzx bx, byte [data_text_x] ;x to bx
+	shl bx, 1 ;skip attribute
+	
+	xor di, di 	;di points at start of memory
+	add di, bx 	;x plus
+	add di, ax 	;y equals
+				;current character location
+	
+	mov ax, cx
+	mov al, byte [.data_character]
+	
+	cmp al, 08h
+	je short .backspace
+	
+	cmp al, __newline__
+	je short .newline
+	
+	cmp di, 4000
+	jae short .scroll
 
-	MOV AX, WORD [__DATA_TEXT_MEMORY]
-	MOV ES, AX
-	XOR DI, DI
+	stosw ;place it in the video memory
+	
+	inc byte [data_text_x] ;finaly increment x by one
+	jmp short .end ;warp to the end
+.backspace:
+	mov al, byte [data_text_x];is this the first character
+	test al, al					;of the line?
+	jz short .backspace_y	;then decrement y, and warp x
+.backspace_x:
+	dec byte [data_text_x] ;or just decrement x
+	jmp short .end
+.backspace_y:
+	dec byte [data_text_y] ;decrement y
+	mov al, byte [data_text_mode_wide]
+	mov byte [data_text_x], al ;warp x to 80 (max chars in line no.)
+	jmp short .end
+.scroll:
+	stosw ;place character before scrolling
+	call io_display_scroll_down
+	inc byte [data_text_x]
+	jmp short .end
+.newline:
+	inc byte [data_text_y]
+	mov byte [data_text_x], 0
+	jmp short .end
+.end:
+	pop es
+	popa
+	ret
+	
+	.data_character	db 0
+	
+;in = si: string
+;out = n/a
+io_display_print_text:
+	push ax
+.loop:
+	lodsb
+	
+	test al, al
+	jz .end
+	
+	call io_display_print_char
+	jmp .loop
+.end:
+	pop ax
+	ret
+	
+;in = n/a
+;out = n/a
+io_display_scroll_down:
+	pusha
+	push es
+	
+	;copy line 1 to line 0, line 2 to line 1 and so on
+	mov ax, word [data_text_memory]
+	mov es, ax
+	
+	;destination is to the first line
+	xor di, di
+	
+	;source is the line below
+	;movzx ax, byte [data_text_mode_tall]
+	;movzx bx, byte [data_text_mode_wide]
+	;mul bx
+	;xchg bx, ax ;bx now holds ax
+	
+	movzx si, byte [data_text_mode_wide]
+	shl si, 1
+	
+.loop:
+	mov ax, word [es:si] ;get word below
+	mov word [es:di], ax ;place the word in dest.
+	
+	cmp bx, 2000
+	jae .end
+	
+	inc bx
+	
+	inc si
+	inc si
+	
+	inc di
+	inc di
+	
+	jmp .loop
+.end:
+	
+	mov al, byte [data_text_mode_tall] ;tall-1 = new position
+	dec al
+	mov byte [data_text_y], al
+	mov byte [data_text_x], 0
+	
+	pop es
+	popa
+	ret
+	
+;in = bl: cursor x, bh: cursor y
+;out = n/a
+io_display_update_text_mode_cursor:
+	pusha
+	
+	mov ax, [data_text_mode_wide]
+	mul bh ;y*vga_wide+x = cursor position
+	xor bh, bh ;delete bh, so we can add bx to ax
+	add ax, bx
+	
+	mov cx, ax ;save ax in cx
+	
+	mov dx, 03d4h ;send first byte..
+	mov al, 0fh ;low port
+	out dx, al
+	
+	mov dx, 03d5h ;low position
+	mov ax, cx
+	and ax, 0ffh
+	out dx, al
+	
+	mov dx, 03d4h ;high port
+	mov al, 0eh
+	out dx, al
+	
+	mov dx, 03d5h ;high position
+	mov ax, cx
+	shr ax, 8
+	and ax, 0ffh
+	out dx, al
+	
+	popa ;we are done, now we restore registers
+	ret
+	
+;=======================================================================
+;
+;io.keyboard - input/user input stuff
+;
+;=======================================================================
+	
+;in = ch: number of chars to read, di: buffer
+;out = di: string
+io_keyboard_input:
+	pusha
+	xor cl, cl
+.loop:
+	call io_keyboard_keypress
+	
+	push bx
+	mov bl, byte [data_text_x]
+	mov bh, byte [data_text_y]
+	call io_display_update_text_mode_cursor
+	pop bx
+	
+	cmp al, 10 ;newline (enter)
+	je .end
+	cmp al, 13
+	je .end
+	cmp al, 8 ;backspace
+	je .back
+	cmp cl, ch ;did we inputed more chars than the ones we should?
+	jge .end
+.print_part:
+	call io_display_print_char
+	inc cl
+	stosb
+	jmp .loop
+.back:
+	cmp cl, 0 ;remove character from string
+	je .loop ;keep cursor from choking
+	dec di
+	mov byte [di], 0
+	dec cl
+	
+	mov al, 8 ;retroceed one character
+	call io_display_print_char
+	mov al, ' ' ;display a space
+	call io_display_print_char
+	mov al, 8 ;when we displayed a space we advanced a character, go and retroceed again...
+	call io_display_print_char
+	
+	push bx
+	mov bl, byte [data_text_x]
+	mov bh, byte [data_text_y]
+	call io_display_update_text_mode_cursor ;update cursor, so it dosent chokes
+	pop bx
+	jmp .loop
+.end:
+	xor al, al
+	stosb
+	popa
+	ret
+	
+;in = n/a
+;out = al: character pressed
+io_keyboard_keypress:
+	xor ax, ax
+	int 16h
+	ret
+	
+;=======================================================================
+;
+;io.serial - in-built serial driver routines
+;
+;=======================================================================
+	
+;in = dx: port number
+;out = n/a
+io_serial_enable:
+	push ax
+	push dx
+	
+	add dx, 1
+	xor al, al
+	out dx, al ;disable all interrupts
+	
+	add dx, 2
+	mov al, 80h
+	out dx, al ;enable dlab
+	
+	sub dx, 3
+	mov al, 02h
+	out dx, al ;set divisor
+	
+	inc dx
+	xor al, al
+	out dx, al ;set baud rate to somewhere betwen 3800
+	
+	add dx, 2
+	mov al, 03h
+	out dx, al ;8 bits and no partity, one stop bit
+	
+	dec dx
+	mov al, 0c7h
+	out dx, al ;enable fifo
+	
+	add dx, 2
+	mov al, 0bh
+	out dx, al ;irq enabled and dsr set
+	
+	pop dx
+	pop ax
+	ret
+	
+;in = dx: port address
+;out = al: byte
+io_serial_get_byte:
+	push dx
+.loop:
+	add dx, 5
+	in al, dx ;put stuff got from dx to al
+	and al, 1
+	jz .loop
+	
+	sub dx, 5
+	
+	in al, dx
+	pop dx
+	ret
+	
+;in = n/a
+;out = al: number of serial ports
+io_serial_ports_check:
+	push es
+	push si
+	push bx
+	push ax
+	
+	mov ax, 0040h
+	mov es, ax
+	mov bx, 0
+	
+	mov ax, word [es:bx] ;get first serial port
+	test ax, ax
+	jz near .no_first_serial_port ;nope
+	;we have serial ports!
+.yes_first_serial_port:
+	mov bx, 2
+	
+	mov ax, word [es:bx] ;get second serial port
+	test ax, ax
+	jz near .no_second_serial_port ;no
+.yes_second_serial_port:
+	mov bx, 4
+	
+	mov ax, word [es:bx] ;get third serial port
+	test ax, ax
+	jz near .no_third_serial_port ;ok, no 3rd port
+.yes_third_serial_port:
+	mov bx, 6
+	
+	mov ax, word [es:bx] ;get fourth serial port
+	test ax, ax
+	jz near .no_third_serial_port ;oh, almost all ports
+	mov byte [.data_ports], 4 ;all ports!
+.end:
+	pop ax
+	pop bx
+	pop si
+	pop es ;segment restored!
+	mov al, byte [.data_ports]
+	ret
+	
+.no_first_serial_port:
+	mov byte [.data_ports], 0 ;zero ports, if there is no registry here
+	jmp near .end
+.no_second_serial_port:
+	mov byte [.data_ports], 1 ;only one port
+	jmp near .end
+.no_third_serial_port:
+	mov byte [.data_ports], 2 ;only two ports
+	jmp near .end
+.no_fourth_serial_port:
+	mov byte [.data_ports], 3 ;only three ports
+	jmp near .end
+	
+	.data_ports	db 0
 
-	MOV AX, [__DATA_TEXT_MODE_TALL]
-	MOV BX, [__DATA_TEXT_MODE_WIDE]
-	MUL BX
-	SHL AX, 1
-	
-.__SUBFUNC_LOOP:
-	CMP DI, AX
-	JE .__SUBFUNC_END
-	
-	MOV WORD [ES:DI], CX ;REPEAT...
-	
-	INC DI ;ADVANCE BY A WORD
-	INC DI
-	
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POP ES
-	POPA
-	RET
-	
-;IN = AL: STARTING SCANLINE, AH: ENDING SCANLINE
-;OUT = N/A
-__IO_DISPLAY_ENABLE_TEXT_MODE_CURSOR:
-	PUSH AX
-	PUSH DX
-	
-	MOV BYTE [.__DATA_END], AH
-	MOV BYTE [.__DATA_START], AL
-	
-	MOV DX, 03D4H
-	
-	MOV AL, 0AH
-	;PUT STARTING SCANLINE
-	OUT DX, AL ;SEND 0A BYTE
-	INC DX
-	IN AL, DX ;GET BYTE
-	AND AL, 0C0H
-	OR AL, [.__DATA_START]
-	OUT DX, AL
-	;PUT ENDING SCANLINE
-	DEC DX
-	MOV AL, 0BH
-	OUT DX, AL ;SEND 0E BYTE
-	MOV DX, 03E0H
-	IN AL, DX ;GET BYTE
-	AND AL, 0E0H
-	OR AL, [.__DATA_END]
-	MOV DX, 03D5H
-	OUT DX, AL
-	
-	POP DX
-	POP AX
-	RET
-	
-	.__DATA_END		DB 0
-	.__DATA_START	DB 0
-	
-;IN = N/A
-;OUT = N/A (AND NO MORE BLINKY :( )
-__IO_DISPLAY_DISABLE_TEXT_MODE_CURSOR:
-	PUSHA
-	
-	MOV DX, 03D4H ;SEND TO VGA REGISTER THAT WE DONT WANT CURSOR
-	MOV AL, 0AH
-	OUT DX, AL
-	
-	INC DX
-	MOV AL, 020H
-	OUT DX, AL
-	
-	POPA
-	RET
-	
-;IN = AL: CHATACTER
-;OUT = N/A
-__IO_DISPLAY_PRINT_CHAR:
-	PUSHA
-	PUSH ES
-	
-	MOV BYTE [.__DATA_CHARACTER], AL
-	
-	;POINT TO TEXT MEMORY
-	MOV AX, WORD [__DATA_TEXT_MEMORY]
-	MOV ES, AX
-	
-	MOV AH, 1BH
-	
-	MOV CX, AX ;SAVE AX IN CX
-	
-	MOVZX AX, BYTE [__DATA_TEXT_Y] ;Y TO AX
-	MOVZX DX, BYTE [__DATA_TEXT_MODE_WIDE]
-	MUL DX
-	SHL AX, 1
-	
-	MOVZX BX, BYTE [__DATA_TEXT_X] ;X TO BX
-	SHL BX, 1 ;SKIP ATTRIBUTE
-	
-	XOR DI, DI ;DI POINTS AT START OF MEMORY
-	ADD DI, BX ;X
-	ADD DI, AX ;Y
-	MOV AX, CX
-	MOV AL, BYTE [.__DATA_CHARACTER]
-	
-	CMP AL, 08H
-	JE SHORT .__SUBFUNC_BACKSPACE
-	
-	CMP AL, __NEWLINE__
-	JE SHORT .__SUBFUNC_NEWLINE
-	
-	CMP DI, 4000
-	JGE SHORT .__SUBFUNC_SCROLL
-	
-	STOSW ;PLACE IT IN THE VIDEO MEMORY
-	
-	INC BYTE [__DATA_TEXT_X] ;FINALY INCREMENT X BY ONE
-	JMP SHORT .__SUBFUNC_END ;WARP TO THE END
-.__SUBFUNC_BACKSPACE:
-	MOV AL, BYTE [__DATA_TEXT_X];IS THIS THE FIRST CHARACTER
-	TEST AL, AL					;OF THE LINE?
-	JZ SHORT .__SUBFUNC_BACKSPACE_Y	;THEN DECREMENT Y, AND WARP X
-.__SUBFUNC_BACKSPACE_X:
-	DEC BYTE [__DATA_TEXT_X] ;OR JUST DECREMENT X
-	JMP SHORT .__SUBFUNC_END
-.__SUBFUNC_BACKSPACE_Y:
-	DEC BYTE [__DATA_TEXT_Y] ;DECREMENT Y
-	MOV AL, BYTE [__DATA_TEXT_MODE_WIDE]
-	MOV BYTE [__DATA_TEXT_X], AL ;WARP X TO 80 (MAX CHARS IN LINE NO.)
-	JMP SHORT .__SUBFUNC_END
-.__SUBFUNC_SCROLL:
-	STOSW ;PLACE CHARACTER BEFORE SCROLLING
-	CALL __IO_DISPLAY_SCROLL_DOWN
-	INC BYTE [__DATA_TEXT_X]
-	JMP SHORT .__SUBFUNC_END
-.__SUBFUNC_NEWLINE:
-	INC BYTE [__DATA_TEXT_Y]
-	MOV BYTE [__DATA_TEXT_X], 0
-	JMP SHORT .__SUBFUNC_END
-.__SUBFUNC_END:
-	POP ES
-	POPA
-	RET
-	
-	.__DATA_CHARACTER	DB 0
-	
-;IN = SI: STRING
-;OUT = N/A
-__IO_DISPLAY_PRINT_TEXT:
-	PUSH AX
-.__SUBFUNC_LOOP:
-	LODSB
-	
-	TEST AL, AL
-	JZ .__SUBFUNC_END
-	
-	CALL __IO_DISPLAY_PRINT_CHAR
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POP AX
-	RET
-	
-;IN = N/A
-;OUT = N/A
-__IO_DISPLAY_SCROLL_DOWN:
-	PUSHA
-	PUSH ES
-	
-	;COPY LINE 1 TO LINE 0, LINE 2 TO LINE 1 AND SO ON
-	MOV AX, WORD [__DATA_TEXT_MEMORY]
-	MOV ES, AX
-	
-	;DESTINATION IS TO THE FIRST LINE
-	XOR DI, DI
-	
-	;SOURCE IS THE LINE BELOW
-	;MOVZX AX, BYTE [__DATA_TEXT_MODE_TALL]
-	;MOVZX BX, BYTE [__DATA_TEXT_MODE_WIDE]
-	;MUL BX
-	;XCHG BX, AX ;BX NOW HOLDS AX
-	
-	MOVZX SI, BYTE [__DATA_TEXT_MODE_WIDE]
-	SHL SI, 1
-	
-.__SUBFUNC_LOOP:
-	MOV AX, WORD [ES:SI] ;GET WORD BELOW
-	MOV WORD [ES:DI], AX ;PLACE THE WORD IN DEST.
-	
-	CMP BX, 2000
-	JAE .__SUBFUNC_END
-	
-	INC BX
-	
-	INC SI
-	INC SI
-	
-	INC DI
-	INC DI
-	
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	
-	MOV AL, BYTE [__DATA_TEXT_MODE_TALL] ;TALL-1 = NEW POSITION
-	DEC AL
-	MOV BYTE [__DATA_TEXT_Y], AL
-	MOV BYTE [__DATA_TEXT_X], 0
-	
-	POP ES
-	POPA
-	RET
-	
-;IN = BL: CURSOR X, BH: CURSOR Y
-;OUT = N/A
-__IO_DISPLAY_UPDATE_TEXT_MODE_CURSOR:
-	PUSHA
-	
-	MOV AX, [__DATA_TEXT_MODE_WIDE]
-	MUL BH ;Y*VGA_WIDE+X = CURSOR POSITION
-	XOR BH, BH ;DELETE BH, SO WE CAN ADD BX TO AX
-	ADD AX, BX
-	
-	MOV CX, AX ;SAVE AX IN CX
-	
-	MOV DX, 03D4H ;SEND FIRST BYTE..
-	MOV AL, 0FH ;LOW PORT
-	OUT DX, AL
-	
-	MOV DX, 03D5H ;LOW POSITION
-	MOV AX, CX
-	AND AX, 0FFH
-	OUT DX, AL
-	
-	MOV DX, 03D4H ;HIGH PORT
-	MOV AL, 0EH
-	OUT DX, AL
-	
-	MOV DX, 03D5H ;HIGH POSITION
-	MOV AX, CX
-	SHR AX, 8
-	AND AX, 0FFH
-	OUT DX, AL
-	
-	POPA ;WE ARE DONE, NOW WE RESTORE REGISTERS
-	RET
-	
-;=======================================================================
-;
-;IO.KEYBOARD - INPUT/USER INPUT STUFF
-;
-;=======================================================================
-	
-;IN = CH: NUMBER OF CHARS TO READ, DI: BUFFER
-;OUT = DI: STRING
-__IO_KEYBOARD_INPUT:
-	PUSHA
-	XOR CL, CL
-.__SUBFUNC_LOOP:
-	CALL __IO_KEYBOARD_KEYPRESS
-	
-	PUSH BX
-	MOV BL, BYTE [__DATA_TEXT_X]
-	MOV BH, BYTE [__DATA_TEXT_Y]
-	CALL __IO_DISPLAY_UPDATE_TEXT_MODE_CURSOR
-	POP BX
-	
-	CMP AL, 10 ;NEWLINE (ENTER)
-	JE .__SUBFUNC_END
-	CMP AL, 13
-	JE .__SUBFUNC_END
-	CMP AL, 8 ;BACKSPACE
-	JE .__SUBFUNC_BACK
-	CMP CL, CH ;DID WE INPUTED MORE CHARS THAN THE ONES WE SHOULD?
-	JGE .__SUBFUNC_END
-	;CMP AL, 'a' ;ALL UPPERCASE, NO LOWERCASE!
-	;JGE .__SUBFUNC_IS_LOWERCASE
-.__SUBFUNC_PRINT_PART:
-	CALL __IO_DISPLAY_PRINT_CHAR
-	INC CL
-	STOSB
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_IS_LOWERCASE:
-	;CMP AL, 'z' ;OH GOD I WANT TO BE LOWERCASE, WHY HE IS LOWERCASE AND NOT ME? >:(
-	;JLE .__SUBFUNC_OK_LOWERCASE
-	JMP .__SUBFUNC_PRINT_PART
-.__SUBFUNC_OK_LOWERCASE:
-	;SUB AL, 27+5 ;LOWERCASE-(27+5) = UPPERCASE
-	JMP .__SUBFUNC_PRINT_PART
-.__SUBFUNC_BACK:
-	CMP CL, 0 ;REMOVE CHARACTER FROM STRING
-	JE .__SUBFUNC_LOOP ;KEEP CURSOR FROM CHOKING
-	DEC DI
-	MOV BYTE [DI], 0
-	DEC CL
-	MOV AL, 8 ;RETROCEED ONE CHARACTER
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV AL, ' ' ;DISPLAY A SPACE
-	CALL __IO_DISPLAY_PRINT_CHAR
-	MOV AL, 8 ;WHEN WE DISPLAYED A SPACE WE ADVANCED A CHARACTER, GO AND RETROCEED AGAIN...
-	CALL __IO_DISPLAY_PRINT_CHAR
-	PUSH BX
-	MOV BL, BYTE [__DATA_TEXT_X]
-	MOV BH, BYTE [__DATA_TEXT_Y]
-	CALL __IO_DISPLAY_UPDATE_TEXT_MODE_CURSOR ;UPDATE CURSOR, SO IT DOSENT CHOKES
-	POP BX
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	XOR AL, AL
-	STOSB
-	POPA
-	RET
-	
-	
-;IN = N/A
-;OUT = AL: CHARACTER PRESSED
-__IO_KEYBOARD_KEYPRESS:
-	XOR AX, AX
-	
-.__SUBFUNC_GET_KEY:
-	CALL __IO_DEVICE_PS2_READ_BYTE_DEVICE ;PLOTTED IN AL
-	
-	CMP AL, 54
-	JE .__SUBFUNC_SHIFT
-	CMP AL, 58
-	JE .__SUBFUNC_SHIFT
-	
-	TEST AL, 128 ;CHECK FOR KEYPRESSES
-	JNZ .__SUBFUNC_GET_KEY
-	
-	;CMP AL, 250 ;NO KEYS PRESSED
-	JMP .__SUBFUNC_KEY_LETTER
-.__SUBFUNC_SHIFT:
-	NOT BYTE [__DATA_KEYBOARD_SHIFT] ;REVERSE TO SAY NON-ZERO
-	JMP .__SUBFUNC_GET_KEY ;SHIFT IS NOT A KEY
-.__SUBFUNC_KEY_LETTER:
-	CMP BYTE [__DATA_KEYBOARD_SHIFT], 0
-	JE .__SUBFUNC_KEY_LETTER_LOWER
-	JMP .__SUBFUNC_KEY_LETTER_UPPER
-	.__SUBFUNC_KEY_LETTER_LOWER:
-		MOVZX BX, AL
-		MOV AL, [__KEYMAP_US_LOWER+BX]
-		JMP .__SUBFUNC_END
-	.__SUBFUNC_KEY_LETTER_UPPER:
-		MOVZX BX, AL
-		MOV AL, [__KEYMAP_US_UPPER+BX]
-		JMP .__SUBFUNC_END
-.__SUBFUNC_END:
-	RET
-	
-	__DATA_KEYBOARD_SHIFT	DB 0
-	;US KEYBOARD KEYMAP WITHOUT SHIFT
-	__KEYMAP_US_LOWER		DB 00H,1BH,31H,32H,33H,34H,35H,36H,37H,
-							DB 38H,39H,30H,2DH,3DH,08H,09H,71H,77H,
-							DB 65H,72H,74H,79H,75H,69H,6FH,70H,5BH,
-							DB 5DH,0CH,00H,61H,73H,64H,66H,67H,68H,
-							DB 6AH,6BH,6CH,3BH,27H,60H,00H,5CH,7AH,
-							DB 78H,63H,76H,62H,6EH,6DH,2CH,2EH,2FH,
-							DB 00H,2AH,00H,20H,00H,03H,03H,03H,03H,
-							DB 03H
-	;US KEYBOARD KEYMAP WITH SHIFT
-	__KEYMAP_US_UPPER		DB 00H,1BH,21H,40H,23H,24H,25H,5EH,26H,
-							DB 2AH,28H,29H,5FH,2BH,08H,09H,51H,57H,
-							DB 45H,52H,54H,59H,55H,49H,4FH,50H,7BH,
-							DB 7DH,0CH,00H,41H,53H,44H,46H,47H,48H,
-							DB 4AH,4BH,4CH,3AH,27H,22H,00H,7CH,5AH,
-							DB 58H,43H,56H,42H,4EH,4DH,3CH,3EH,3FH,
-							DB 00H,2AH,00H,20H,00H,03H,03H,03H,03H,
-							DB 03H
-	;__KEYMAP_MEXICO		DB '   /     .             IOP[]  ASDFGHJKL;'  \  CVBNM,<>                                    '
-	
-;=======================================================================
-;
-;IO.SERIAL - IN-BUILT SERIAL DRIVER ROUTINES
-;
-;=======================================================================
-	
-;IN = DX: PORT NUMBER
-;OUT = N/A
-__IO_SERIAL_ENABLE:
-	PUSH AX
-	PUSH DX
-	
-	INC DX ;DISABLE ALL INTERRUPTS
-	XOR AL, AL
-	OUT DX, AL
-	
-	ADD DX, 2 ;ENABLE DLAB
-	MOV AL, 80H
-	OUT DX, AL
-	
-	SUB DX, 3 ;SET DIVISOR TO 3
-	MOV AL, 03H
-	OUT DX, AL
-	
-	INC DX ;38400 BAUD RATE
-	XOR AL, AL
-	OUT DX, AL
-	
-	ADD DX, 2 ;8 BITS AND NO PARITY, ONE STOP BIT
-	MOV AL, 03H
-	OUT DX, AL
-	
-	DEC DX ;ENABLE FIFO AND CLEAR IT
-	MOV AL, 0C7H
-	OUT DX, AL
-	
-	ADD DX, 2 ;ENABLE IRQ
-	MOV AL, 0BH
-	OUT DX, AL
-	
-	POP DX
-	POP AX
-	RET
-	
-;IN = DX: PORT ADDRESS
-;OUT = AL: BYTE
-__IO_SERIAL_GET_BYTE:
-	PUSH DX
-.__SUBFUNC_LOOP:
-	ADD DX, 5
-	IN AL, DX ;PUT STUFF GOT FROM DX TO AL
-	AND AL, 1
-	JNZ .__SUBFUNC_LOOP
-	
-	SUB DX, 5
-	
-	IN AL, DX
-	POP DX
-	RET
-	
-;IN = N/A
-;OUT = AL: NUMBER OF SERIAL PORTS
-__IO_SERIAL_PORTS_CHECK:
-	PUSH ES
-	PUSH SI
-	PUSH BX
-	PUSH AX
-	
-	MOV AX, 0040H
-	MOV ES, AX
-	MOV BX, 0
-	
-	MOV AX, WORD [ES:BX] ;GET FIRST SERIAL PORT
-	TEST AX, AX
-	JZ NEAR .__SUBFUNC_NO_FIRST_SERIAL_PORT ;NOPE
-	;WE HAVE SERIAL PORTS!
-.__SUBFUNC_YES_FIRST_SERIAL_PORT:
-	MOV BX, 2
-	
-	MOV AX, WORD [ES:BX] ;GET SECOND SERIAL PORT
-	TEST AX, AX
-	JZ NEAR .__SUBFUNC_NO_SECOND_SERIAL_PORT ;NO
-.__SUBFUNC_YES_SECOND_SERIAL_PORT:
-	MOV BX, 4
-	
-	MOV AX, WORD [ES:BX] ;GET THIRD SERIAL PORT
-	TEST AX, AX
-	JZ NEAR .__SUBFUNC_NO_THIRD_SERIAL_PORT ;OK, NO 3RD PORT
-.__SUBFUNC_YES_THIRD_SERIAL_PORT:
-	MOV BX, 6
-	
-	MOV AX, WORD [ES:BX] ;GET FOURTH SERIAL PORT
-	TEST AX, AX
-	JZ NEAR .__SUBFUNC_NO_THIRD_SERIAL_PORT ;OH, ALMOST ALL PORTS
-	MOV BYTE [.__DATA_PORTS], 4 ;ALL PORTS!
-.__SUBFUNC_END:
-	POP AX
-	POP BX
-	POP SI
-	POP ES ;SEGMENT RESTORED!
-	MOV AL, BYTE [.__DATA_PORTS]
-	RET
-	
-.__SUBFUNC_NO_FIRST_SERIAL_PORT:
-	MOV BYTE [.__DATA_PORTS], 0 ;ZERO PORTS, IF THERE IS NO REGISTRY HERE
-	JMP NEAR .__SUBFUNC_END
-.__SUBFUNC_NO_SECOND_SERIAL_PORT:
-	MOV BYTE [.__DATA_PORTS], 1 ;ONLY ONE PORT
-	JMP NEAR .__SUBFUNC_END
-.__SUBFUNC_NO_THIRD_SERIAL_PORT:
-	MOV BYTE [.__DATA_PORTS], 2 ;ONLY TWO PORTS
-	JMP NEAR .__SUBFUNC_END
-.__SUBFUNC_NO_FOURTH_SERIAL_PORT:
-	MOV BYTE [.__DATA_PORTS], 3 ;ONLY THREE PORTS
-	JMP NEAR .__SUBFUNC_END
-	
-	.__DATA_PORTS	DB 0
+;in = dx: port address, al: byte to send
+;out = n/a
+io_serial_send_byte:
+	push ax
+	push dx
+	
+	mov ah, al
+.loop:
+	add dx, 5
+	in al, dx
+	test al, 020h ;is serial free for transmiting?
+	jz short .loop ;nope
+	;ok, lets put it if its empty
+	sub dx, 5
+	mov al, ah
+	out dx, al
 
-;IN = DX: PORT ADDRESS, AL: BYTE TO SEND
-;OUT = N/A
-__IO_SERIAL_SEND_BYTE:
-	PUSH AX
-	PUSH DX
+	pop dx
+	pop ax
+	ret
 	
-	MOV AH, AL
-.__SUBFUNC_LOOP:
-	ADD DX, 5
-	IN AL, DX
-	AND AL, 020H ;IS SERIAL FREE FOR TRANSMITING?
-	JNZ .__SUBFUNC_LOOP ;NOPE
-	;OK, LETS PUT IT IF ITS EMPTY
-	SUB DX, 5
-	MOV AL, AH
-	OUT DX, AL
-
-	POP DX
-	POP AX
-	RET
+;in = dx: port address, si: memory location, cx: how many
+;out = n/a
+io_serial_send_bytes:
+	pusha
+.loop:
+	cmp cx, 0 ;if counter is zero, end
+	je short .end
 	
-;IN = DX: PORT ADDRESS, SI: MEMORY LOCATION, CX: HOW MANY
-;OUT = N/A
-__IO_SERIAL_SEND_BYTES:
-	PUSH CX
-	PUSH DX
-	PUSH AX
-	PUSH SI
-.__SUBFUNC_LOOP:
-	CMP CX, 0 ;IF COUNTER IS ZERO, END
-	JE NEAR .__SUBFUNC_END
+	mov al, byte [si]
+	call io_serial_send_byte
 	
-	MOV AL, BYTE [SI]
-	CALL __IO_SERIAL_SEND_BYTE
+	inc si ;next byte...
+	dec cx
+	jmp short .loop
+.end:
+	popa
+	ret
 	
-	INC SI ;NEXT BYTE...
-	DEC CX
-	JMP NEAR .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POP SI
-	POP AX
-	POP DX
-	POP CX
-	RET
+;in = dx: port address, si: memory location, cl: how many
+;out = cf: clear if sucess
+io_serial_ldstp_send_bytes:
+	pusha
+	;send byte of "incoming data"
+	mov al, 017h
+	call io_serial_send_byte
+	
+	call io_serial_get_byte ;get reply...
+	cmp al, 01ah ;computer is stupid and didnt understood
+	jne short .error
+	
+	;else if computer 2 understood...
+	mov al, 019h ;send byte of "size of packet"
+	call io_serial_send_byte
+	
+	call io_serial_get_byte ;get reply...
+	cmp al, 01bh ;how many the odds?
+	jne short .error
+	
+	;at this point, we will send a unsigned byte dicating the size of
+	;our packet
+	mov al, cl ;put size in al
+	call io_serial_send_byte
+	
+	call io_serial_get_byte
+	cmp al, 01ah
+	jne short .error
+	
+	;now its time to send the actual data
+	popa ;registers where oofed while we did this initialization
+	pusha
+.loop:
+	cmp cx, 0 ;if counter is zero, end
+	je short .end
+	
+	lodsb ;get byte and send it
+	call io_serial_send_byte
+	
+	dec cx
+	jmp short .loop
+.end:
+	mov al, 01ah ;lets make sure computer finished analyzing data...
+	call io_serial_send_byte
+	
+	call io_serial_get_byte ;get reply...
+	
+	cmp al, 0bbh ;error, data trown or destroyed
+	je .error
+	
+	popa
+	
+	clc
+	ret
+	
+.error:
+	popa
+	stc
+	ret
+	
+;in = dx: port address, di: place to put data, cl: data size limit
+;out = cf: clear if sucess, ch: data sent
+io_serial_ldstp_get_bytes:
+	pusha
+	;now we are at the other part of the table
+	call io_serial_get_byte ;get "data incoming" byte
+	cmp al, 017h
+	jne short .abort
+	
+	mov al, 01ah ;send reply of "ok" byte
+	call io_serial_send_byte
+	
+	call io_serial_get_byte
+	cmp al, 019h ;get "size of packet" byte
+	jne short .abort
+	
+	mov al, 01bh ;send reply of "ok gimme data naw"
+	call io_serial_send_byte
+	
+	call io_serial_get_byte ;get size of packet to be sent
+	
+	;hmm is this bigger than the buffer we allow!?
+	cmp cl, al
+	jl short .abort
+	
+	mov ch, al ;store size in ch, for future use
+	
+	;nope, proceed
+	;send reply byte "ok i got ur stuff, now gimme me actual data naw"
+	mov al, 01ah
+	call io_serial_send_byte
+	popa
+	pusha
+	xor cl, cl ;set cl to zero
+.get_bytes:
+	cmp cl, ch
+	je short .abort
+	
+	lodsb
+	call io_serial_send_byte
+	
+	inc cl ;decrement counter...
+	
+	jmp short .get_bytes
+	
+.end:
+	;when we finished receiving data, now we must send the "ok, finish"
+	;byte
+	call io_serial_get_byte
+	
+	cmp al, 01ah
+	jne .abort
+	
+	mov al, 0bbh
+	call io_serial_send_byte ;done
+	popa ;we finished!
+	clc
+	ret
+	
+.abort:
+	mov al, 0feh ;send error byte (auto cancels everything)
+	call io_serial_send_byte
+	
+	popa
+	stc
+	ret
 	
 ;=======================================================================
 ;
-;IO.MEMORY - MEMORY ALLOCATION AND MANAGEMENT ROUTINES
+;io.memory - memory allocation and management routines
 ;
 ;=======================================================================
 
-;IN = SI: SOURCE, DI: DESTINATION, CX: BYTES TO COPY
-;OUT = N/A
-__IO_MEMORY_COPY:
-	PUSHA
-.__SUBFUNC_LOOP:
-	CMP CX, 0 ;DID WE ENDED YET?
-	JE .__SUBFUNC_END
-	MOV AL, BYTE [SI]
-	MOV BYTE [DI], AL
+;in = si: source, di: destination, cx: bytes to copy
+;out = n/a
+io_memory_copy:
+	pusha
+.loop:
+	cmp cx, 0 ;did we ended yet?
+	je .end
+	mov al, byte [si]
+	mov byte [di], al
 	
-	INC DI
-	INC SI
-	DEC CX
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POPA
-	RET
+	inc di
+	inc si
+	dec cx
+	jmp .loop
+.end:
+	popa
+	ret
 
-;IN = AL: BYTE TO COPY, DI: DESTINATION, CX: TIMES TO COPY CHAR
-;OUT = N/A
-__IO_MEMORY_COPY_BYTE:
-	PUSHA
-.__SUBFUNC_LOOP:
-	CMP CX, 0 ;IF WE ENDED, END
-	JE .__SUBFUNC_END
-	MOV BYTE [DI], AL ;COPY AL TO DI
-	INC DI
-	DEC CX
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POPA
-	RET
+;in = al: byte to copy, di: destination, cx: times to copy char
+;out = n/a
+io_memory_copy_byte:
+	pusha
+.loop:
+	cmp cx, 0 ;if we ended, end
+	je .end
+	mov byte [di], al ;copy al to di
+	inc di
+	dec cx
+	jmp .loop
+.end:
+	popa
+	ret
 	
-;IN = N/A
-;OUT = NOTHING TOO IMPORTANT/CRITICAL ;)
-__IO_MEMORY_DESTROY_TABLE:
-	;I FEEL LIKE I WANT TO DESTROY MY MEMORY TABLE
-	;IM MAD, I WANT TO XOR IT COMPLELTELY
-	;AND NO ONE IS GONNA STOP ME
-	; - SUPERLEAF1995
-	PUSH AX
-	PUSH BX
-	PUSH CX
-	PUSH ES
-	MOV AX, __MEMORY_TABLE__
-	MOV ES, AX
-	XOR BX, BX
-.__SUBFUNC_DESTROY_ENTRY_NUMBER:
-	;XOR SOMETHING, (USELESS SINCE 0.1.5)
-	MOV WORD [ES:BX], 0
-.__SUBFUNC_ERASE_ENTRIES:
-	;NOW LETS DELETE ALL ENTRIES (USELESS SINCE 0.1.5)
-	MOV WORD [ES:BX], 0
-	INC BX
-	CMP BX, 0FFFAH
-	JGE .__SUBFUNC_END
-	JMP .__SUBFUNC_ERASE_ENTRIES
-.__SUBFUNC_END:
-	POP ES ;DONE >:)
-	POP CX
-	POP BX
-	POP AX
-	RET
+;in = n/a
+;out = nothing too important/critical ;)
+io_memory_destroy_table:
+	;i feel like i want to destroy my memory table
+	;im mad, i want to xor it compleltely
+	;and no one is gonna stop me
+	; - superleaf1995
+	push ax
+	push bx
+	push cx
+	push es
+	mov ax, __memory_table__
+	mov es, ax
+	xor bx, bx
+.destroy_entry_number:
+	;xor something, (useless since 0.1.5)
+	mov word [es:bx], 0
+.erase_entries:
+	;now lets delete all entries (useless since 0.1.5)
+	mov word [es:bx], 0
+	inc bx
+	cmp bx, 0fffah
+	jge .end
+	jmp .erase_entries
+.end:
+	pop es ;done >:)
+	pop cx
+	pop bx
+	pop ax
+	ret
 	
-;IN = CX: SEGMENT, AL: FLAG
-;OUT = ENTRY IN MEMORY TABLE
-__IO_MEMORY_MANAGE:
-	PUSH AX
-	PUSH BX
-	PUSH CX
-	PUSH ES
+;in = cx: segment, al: flag
+;out = entry in memory table
+io_memory_manage:
+	push ax
+	push bx
+	push cx
+	push es
 	
-	CMP CX, 2FFFH ;NO SEGMENTS BELOW PROGRAM MEMORY (3000H)
-	JLE .__SUBFUNC_ERROR
-	JMP .__SUBFUNC_ERROR ;IF NOT A VALID FLAG, BAIL OUT
-.__SUBFUNC_CONT:
-	MOV BYTE [.__DATA_FLAG], BYTE AL
+	cmp cx, 2fffh ;no segments below program memory (3000h)
+	jle .error
+	jmp .error ;if not a valid flag, bail out
+.cont:
+	mov byte [.data_flag], byte al
 	
-	MOV WORD [.__DATA_TABLE_SEG], CX
+	mov word [.data_table_seg], cx
 
-	;SEGMENTATE TO MEMORY TABLE
-	MOV AX, __MEMORY_TABLE__
-	MOV ES, AX
-	XOR BX, BX
-.__SUBFUNC_FLAG_IT:
-	MOV CX, WORD [.__DATA_TABLE_SEG] ;LOOK FOR SEGMENT
-	SUB CX, 3000H ;SUBSTRACT RESERVED SEGMENTS
-	MOV BX, CX ;BX NOW POINTS AT ENTRY
+	;segmentate to memory table
+	mov ax, __memory_table__
+	mov es, ax
+	xor bx, bx
+.flag_it:
+	mov cx, word [.data_table_seg] ;look for segment
+	sub cx, 3000h ;substract reserved segments
+	mov bx, cx ;bx now points at entry
 	
-	;SET THE FLAG
-	MOV BYTE AL, [.__DATA_FLAG]
-	MOV BYTE [ES:BX], BYTE AL
+	;set the flag
+	mov byte al, [.data_flag]
+	mov byte [es:bx], byte al
 	
-	STC ;SUCESS!
-.__SUBFUNC_END:
-	POP ES
-	POP CX
-	POP BX
-	POP AX
-	RET
+	stc ;sucess!
+.end:
+	pop es
+	pop cx
+	pop bx
+	pop ax
+	ret
 
-.__SUBFUNC_ERROR:
-	CLC
-	JMP .__SUBFUNC_END
+.error:
+	clc
+	jmp .end
 
-	.__DATA_TABLE_SEG		DW 0
-	.__DATA_FLAG			DB 0
+	.data_table_seg		dw 0
+	.data_flag			db 0
 	
 ;=======================================================================
 ;
-;IO.STRING - MANAGE, SEARCH AND CUT STRINGS AT YOUR WILL
+;io.string - manage, search and cut strings at your will
 ;
 ;=======================================================================
 
-;IN = SI: STRING, CX: PLACE WHERE CHARACTER SHOULD BE, AL: CHARACTER TO FIND
-;OUT = FLAG CLEAR IF TRUE, ELSE SET IF FALSE
-__IO_STRING_CHECK_CHARACTER_IN_LOCATION:
-	PUSHA
-	ADD SI, CX
-	CMP BYTE [SI], AL
-	JE .__SUBFUNC_YES ;IF YES, ELSE DO NO
-.__SUBFUNC_NO: ;NO CHARACTER IN LOCATION
-	POPA
-	STC
-	RET
-.__SUBFUNC_YES: ;YES
-	POPA
-	CLC
-	RET
+;in = si: string, cx: place where character should be, al: character to find
+;out = flag clear if true, else set if false
+io_string_check_character_in_location:
+	pusha
+	add si, cx
+	cmp byte [si], al
+	je .yes ;if yes, else do no
+.no: ;no character in location
+	popa
+	stc
+	ret
+.yes: ;yes
+	popa
+	clc
+	ret
 	
-;IN = SI: STRING 1, DI: STRING 2
-;OUT = CARRY FLAG SET IF EQUAL
-__IO_STRING_COMPARE:
-	PUSH AX
-	PUSH_INDEXES
-	XOR AX, AX ;ELIMINATE ANY AX LEFT
-.__SUBFUNC_LOOP:
-	MOV AL, BYTE [SI] ;GET BYTES
-	MOV AH, BYTE [DI]
+;in = si: string 1, di: string 2
+;out = carry flag set if equal
+io_string_compare:
+	pusha
+	xor ax, ax ;eliminate any ax left
+.loop:
+	mov al, byte [si] ;get bytes
+	mov ah, byte [di]
 	
-	CMP AL, AH ;ARE THEY EQUAL?
-	JNE NEAR .__SUBFUNC_NOT_EQUAL
+	cmp al, ah ;are they equal?
+	jne near .not_equal
 	
-	TEST AX, AX ;DID WE GOT A ZERO?
-	JZ NEAR .__SUBFUNC_EQUAL
+	test ax, ax ;did we got a zero?
+	jz near .equal
 
-	ADD SI, 1 ;INCREMENT ONE BYTE...
-	ADD DI, 1
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_NOT_EQUAL:
-	CLC
-	JMP .__SUBFUNC_END
-.__SUBFUNC_EQUAL:
-	STC
-.__SUBFUNC_END:
-	POP_INDEXES
-	POP AX
-	RET
+	add si, 1 ;increment one byte...
+	add di, 1
+	jmp .loop
+.not_equal:
+	clc
+	jmp .end
+.equal:
+	stc
+.end:
+	popa
+	ret
 	
-;IN = SI: STRING TO COPY, DI: DESTINATION
-;OUT = DI: STRING
-__IO_STRING_COPY:
-	PUSHA
-.__SUBFUNC_LOOP:
-	LODSB
+;in = si: string to copy, di: destination
+;out = di: string
+io_string_copy:
+	pusha
+.loop:
+	lodsb
 	
-	CMP AL, 0
-	JE .__SUBFUNC_END
+	cmp al, 0
+	je .end
 	
-	STOSB
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	MOV AL, 0
-	STOSB
-	POPA
-	RET
+	stosb
+	jmp .loop
+.end:
+	mov al, 0
+	stosb
+	popa
+	ret
 	
-;IN = SI: STRING, AL: CHARACTER
-;OUT = FLAG CLEAR IS TRUE, ELSE IF FALSE
-__IO_STRING_HAS_CHARACTER:
-	PUSH AX
-	PUSH SI
-.__SUBFUNC_LOOP:
-	CMP BYTE [SI], 0
-	JE .__SUBFUNC_NO
-	CMP BYTE [SI], AL
-	JE .__SUBFUNC_YES
-	INC SI
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_NO:
-	STC
-	JMP .__SUBFUNC_END
-.__SUBFUNC_YES:
-	CLC
-.__SUBFUNC_END:
-	POP SI
-	POP AX
-	RET
+;in = si: string, al: character
+;out = flag clear is true, else if false
+io_string_has_character:
+	push ax
+	push si
+.loop:
+	cmp byte [si], 0
+	je short .no
+	cmp byte [si], al
+	je short .yes
+	inc si
+	jmp short .loop
+.no:
+	stc
+	jmp short .end
+.yes:
+	clc
+.end:
+	pop si
+	pop ax
+	ret
 	
-;IN = SI: STRING
-;OUT = CARRY FLAG SET IF TRUE, ELSE FALSE
-__IO_STRING_IS_EMPTY:
-	CMP BYTE [SI], 0
-	JE SHORT .__SUBFUNC_YES
-.__SUBFUNC_NO:
-	CLC
-	RET
-.__SUBFUNC_YES:
-	STC
-	RET
+;in = si: string
+;out = carry flag set if true, else false
+io_string_is_empty:
+	cmp byte [si], 0
+	je short .yes
+.no:
+	clc
+	ret
+.yes:
+	stc
+	ret
 	
-;IN = SI: STRING
-;OUT = CX: LENGHT OF STRING (DOES NOT INCLUDE NULL)
-__IO_STRING_LENGHT:
-	PUSHA
-	XOR CX, CX
-.__SUBFUNC_LOOP:
-	CMP BYTE [SI], 0 ;IF AL IS ZERO
-	JE .__SUBFUNC_END
+;in = si: string
+;out = cx: lenght of string (does not include null)
+io_string_lenght:
+	pusha
+	xor cx, cx
+.loop:
+	cmp byte [si], 0 ;if al is zero
+	je .end
 	
-	INC CX ;ELSE KEEP ADDING
-	INC SI
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	MOV WORD [.__DATA_LENGHT], CX
-	POPA
-	MOV CX, WORD [.__DATA_LENGHT]
-	RET
-	.__DATA_LENGHT		DW 0
+	inc cx ;else keep adding
+	inc si
+	jmp .loop
+.end:
+	mov word [.data_lenght], cx
+	popa
+	mov cx, word [.data_lenght]
+	ret
+	.data_lenght		dw 0
 	
-;IN = SI: STRING, DI: RESULTANT STRING, AL: CHARACTER TO REPLACE, AH: REPLACEMENT FOR CHARACTER AL
-;OUT = DI: RESULTANT STRING
-__IO_STRING_REPLACE_CHARACTER:
-	PUSHA
-	MOV DL, AL ;SAVE AL IN DL
-	MOV DH, AH ;SAME WITH AH...
-.__SUBFUNC_LOOP:
-	LODSB ;GET CHARACTER, PLOT IT ON AL
-	CMP AL, DL ;IF AL = DL, THEN WE HAVE A CHARACTER TO REPLACE
-	JE .__SUBFUNC_REP ;TIME TO REPLACE
-	CMP AL, 0
-	JE .__SUBFUNC_END
-	STOSB
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_REP:
-	MOV AL, DH
-	STOSB
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	MOV AL, 0
-	STOSB
-	POPA
-	RET
+;in = si: string, di: resultant string, al: character to replace, ah: replacement for character al
+;out = di: resultant string
+io_string_replace_character:
+	pusha
+	mov dl, al ;save al in dl
+	mov dh, ah ;same with ah...
+.loop:
+	lodsb ;get character, plot it on al
+	cmp al, dl ;if al = dl, then we have a character to replace
+	je .rep ;time to replace
+	cmp al, 0
+	je .end
+	stosb
+	jmp .loop
+.rep:
+	mov al, dh
+	stosb
+	jmp .loop
+.end:
+	mov al, 0
+	stosb
+	popa
+	ret
 	
-;IN = SI: STRING
-;OUT = DI: REVERSED STRING
-__IO_STRING_REVERSE:
-	PUSHA
-	CALL __IO_STRING_LENGHT
-	MOV WORD [.__DATA_LENGHT], CX
-	MOV DI, SI
-	ADD DI, WORD [.__DATA_LENGHT]
-	DEC DI ;DO NOT COPY NULL CHARACTER
-.__SUBFUNC_LOOP:
-	MOV AL, BYTE [DI]
-	MOV AH, BYTE [SI]
-	MOV BYTE [DI], AH
-	MOV BYTE [SI], AL
-	INC SI
-	DEC DI
-	CMP DI, SI
-	JA .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	POPA
-	RET
+;in = si: string
+;out = di: reversed string
+io_string_reverse:
+	pusha
+	call io_string_lenght
+	mov word [.data_lenght], cx
+	mov di, si
+	add di, word [.data_lenght]
+	dec di ;do not copy null character
+.loop:
+	mov al, byte [di]
+	mov ah, byte [si]
+	mov byte [di], ah
+	mov byte [si], al
+	inc si
+	dec di
+	cmp di, si
+	ja .loop
+.end:
+	popa
+	ret
 	
-	.__DATA_LENGHT DW 0
+	.data_lenght dw 0
 	
 	
-;IN = SI: STRING, DI: TOKENIZED STRING, AL: SEPARATOR CHARACTER
-;OUT = DI: TOKENIZED STRING
-__IO_STRING_TOKENIZE:
-	PUSHA
-	MOV DL, AL ;SAVE AL IN DL
-.__SUBFUNC_LOOP:
-	LODSB ;GET CHARACTER, PLOT IT ON AL
-	CMP AL, DL ;IF AL = DL, THEN WE HAVE A SEPARATOR!
-	JE .__SUBFUNC_DIVIDE ;TIME TO DIVIDE
-	CMP AL, 0
-	JE .__SUBFUNC_END
+;in = si: string, di: tokenized string, al: separator character
+;out = di: tokenized string
+io_string_tokenize:
+	pusha
+	mov dl, al ;save al in dl
+.loop:
+	lodsb ;get character, plot it on al
+	cmp al, dl ;if al = dl, then we have a separator!
+	je .divide ;time to divide
+	cmp al, 0
+	je .end
 	
-	STOSB ;IF ITS A NORMAL CHARACTER JUST PUT IT
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_DIVIDE:
-	MOV AL, 0 ;MAKE SEPARATOR INTO NULL
-	STOSB
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	MOV AL, 0
-	STOSB
-	POPA
-	RET
+	stosb ;if its a normal character just put it
+	jmp .loop
+.divide:
+	mov al, 0 ;make separator into null
+	stosb
+	jmp .loop
+.end:
+	mov al, 0
+	stosb
+	popa
+	ret
 	
-;IN = SI: KEYBOARD BUFFER (EXPRG.COM), DI: PLACE TO PUT AFPFS FILENAME
-;OUT = DI: AFPFS READABLE FILENAME (EXPRG  COM)
-__IO_STRING_TO_AFPFS_FILENAME:
-	PUSHA
-	XOR CX, CX ;CX = 0
-.__SUBFUNC_LOOP:
-	LODSB
-	CMP AL, 0 ;NULL TERMINATOR
-	JE .__SUBFUNC_END
-	CMP AL, '.' ;DOT
-	JE .__SUBFUNC_SPACE_LOOP
-	CMP CX, 10 ;MORE THAN 11 CHARS
-	JGE .__SUBFUNC_END
-	INC CX
-	STOSB ;ELSE PUT THE CHAR
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_SPACE_LOOP: ;PUT SPACES, UNTIL WE FIT 8.
-	CMP CX, 6
-	JE .__SUBFUNC_LOOP
-	MOV AL, ' '
-	STOSB
-	INC CX
-	CMP CX, 8
-	JL .__SUBFUNC_SPACE_LOOP
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_END:
-	MOV AL, 0
-	STOSB
-	POPA
-	RET
+;in = si: keyboard buffer (exprg.com), di: place to put afpfs filename
+;out = di: afpfs readable filename (exprg  com)
+io_string_to_afpfs_filename:
+	pusha
+	xor cx, cx ;cx = 0
+.loop:
+	lodsb
+	cmp al, 0 ;null terminator
+	je .end
+	cmp al, '.' ;dot
+	je .space_loop
+	cmp cx, 10 ;more than 11 chars
+	jge .end
+	inc cx
+	stosb ;else put the char
+	jmp .loop
+.space_loop: ;put spaces, until we fit 8.
+	cmp cx, 6
+	je .loop
+	mov al, ' '
+	stosb
+	inc cx
+	cmp cx, 8
+	jl .space_loop
+	jmp .loop
+.end:
+	mov al, 0
+	stosb
+	popa
+	ret
 	
 ;=======================================================================
 ;
-;IO.SYSTEM - SYSTEM RELATED STUFF, NOT OS, BUT RATHER ESSENTIAL ROUTINES
+;io.system - system related stuff, not os, but rather essential routines
 ;
 ;=======================================================================
 	
-;IN = N/A
-;OUT = N/A
-__IO_SYSTEM_REBOOT:
-	XOR AX, AX
-	INT 19H
-	HLT
+;in = n/a
+;out = n/a
+io_system_reboot:
+	xor ax, ax
+	int 19h
+	hlt
 	
-;IN = AX: TIME
-;OUT = N/A
-__IO_SYSTEM_TIMER:
-	PUSH_REGISTERS
-	TEST AX, AX
-	JZ .__SUBFUNC_END ;ZERO LENGHT MEANS NO ACTION DONE
+;in = ax: time
+;out = n/a
+io_system_timer:
+	pusha
+	test ax, ax
+	jz .end ;zero lenght means no action done
 	
-	MOV WORD [.__DATA_COUNTER], 0 ;SAVE TIMER IN WORD
+	mov word [.data_counter], 0 ;save timer in word
 	
-	MOV BX, AX
-	XOR AX, AX
-	MOV AL, 2
-	MUL BX
-	MOV WORD [__DATA_REQUESTED_TIMER], AX
+	mov bx, ax
+	xor ax, ax
+	mov al, 2
+	mul bx
+	mov word [data_requested_timer], ax
 	
-	XOR AX, AX
-	INT 1AH ;GET TICKS PER SECOND
-	MOV WORD [__DATA_TICKS_PER_SECOND], DX
-.__SUBFUNC_LOOP:
-	XOR AX, AX
-	INT 1AH
+	xor ax, ax
+	int 1ah ;get ticks per second
+	mov word [data_ticks_per_second], dx
+.loop:
+	xor ax, ax
+	int 1ah
 	
-	CMP DX, [__DATA_TICKS_PER_SECOND]
-	JNE .__SUBFUNC_UPDATE
-	JMP .__SUBFUNC_LOOP
-.__SUBFUNC_UPDATE:
-	INC WORD [.__DATA_COUNTER]
-	MOV AX, WORD [.__DATA_COUNTER]
+	cmp dx, [data_ticks_per_second]
+	jne .update
+	jmp .loop
+.update:
+	inc word [.data_counter]
+	mov ax, word [.data_counter]
 	
-	CMP AX, WORD [__DATA_REQUESTED_TIMER]
-	JGE .__SUBFUNC_END
+	cmp ax, word [data_requested_timer]
+	jge .end
 	
-	MOV WORD [__DATA_TICKS_PER_SECOND], DX
+	mov word [data_ticks_per_second], dx
 	
-	JMP .__SUBFUNC_LOOP
+	jmp .loop
 	
-	.__DATA_COUNTER	DW 0
+	.data_counter	dw 0
 	
-.__SUBFUNC_END:
-	POP_REGISTERS
-	RET
+.end:
+	popa
+	ret
