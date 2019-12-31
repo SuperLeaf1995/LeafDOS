@@ -1,0 +1,325 @@
+<html>
+	<head>
+		<title>LeafDOS Documentation</title>
+		<style>
+			p, h1, h2, h3, h4, h5, h6 {
+				color: black;
+			}
+			
+			a {
+				color: #0000aa;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>===========================================================================</h1>
+		<img src="LEAF_DOS_LOGO.png"></img>
+		<br></br> <!-- some nice break here -->
+		<code>The not-so perfect monotasking, 16-bit, 8086 compatible operating system for
+		old computers and notebooks</code>
+		<h1>===========================================================================</h1>
+		
+		<h1>Index</h1>
+		<ul>
+			<li>
+				<a href="#1.1">1.1 Introduction</a>
+			</li>
+			<ul>
+				<li>
+					<a href="#1.1.1">1.1.1 A bit of backstory</a>
+				</li>
+			</ul>
+			<li>
+				<a href="#1.2">1.2 Kernel</a>
+			</li>
+			<ul>
+				<li>
+					<a href="#1.2.1">1.2.1 What the kernel can do</a>
+				</li>
+				<li>
+					<a href="#1.2.2">1.2.2 What the kernel cannot do</a>
+				</li>
+			</ul>
+			<li>
+				<a href="#1.3">1.3 Operating system schemes</a>
+			</li>
+			<li>
+				<a href="#1.4">1.4 Compatibility with other OSes</a>
+			</li>
+			<li>
+				<a href="#1.5">1.5 Credits</a>
+			</li>
+			<li>
+				<a href="#1.6">1.6 Collaborating</a>
+			</li>
+		</ul>
+		
+		<h1 id="1.1">Introduction</h1>
+		<p>Leaf DOS or Leaf Diskette Operating System is a portable, 80x86 compatible operating system
+		desinged to be runt on almost any 80's and 90's platform. Without any kind of restriction.</p>
+		<p>One of the main aims of Leaf DOS is to serve as a common DOS (nothing related to MS-DOS/FreeDOS)
+		that can satisfy the needs of a operating system in older computers, while being minimalistic
+		and incredibly small and fast.</p>
+		
+		<h1 id="1.1.1">A bit of backstory</h1>
+		<p>Leaf DOS came into my mind when i was starting to code in CSS (yep, that stylesheet
+		language). And i said myself "why not make an operating system", "it will not be
+		so hard". And i will never regret saying that. Then i discovered some <a
+		href="http://wiki.osdev.org/Duct_Von_Tape">stuff
+		wich i borrowed from internet</a>, so i made a big spaghetti, i didn't understood
+		what i was doing, but i did something, and i gave that a name.</p>
+		<p>That's my first OS ever made, Zuly OS. The only thing it could do was
+		displaying a RSOD on error (Windows BSOD but in red). And if it suceeded
+		it overwrote itself somehow.</p>
+		<p>I saw no future, since i didn't understood what i was doing. So i
+		decided to learn something else.</p>
+		<p>By casuality or destinity i ended up reading tutorialspoint's C course, i
+		liked C so much that i decided to code in it. Once i started to code
+		i made Economitopia 0.1, my first program ever made.</p>
+		<p>Once again, another thing i thank life for giving me was Turbo C, i was
+		looking for that piece of compiler for many time without knowing it. In it
+		i made my first videogame (and it was not at all buggy, but the gameplay
+		was a bit awful). Once the videogame was made, i made some others, but
+		they never reached the level of my first videogame.</p>
+		<p>Then my HDD formatted when i tried to re-install Windows 7 because
+		it crashed a lot and stopped working.</p>
+		<p>I was tired of having BSOD's on Windows, so i decided to switch to
+		Linux.</p>
+		<p>Once again, luckily i found Debian Linux, and i installed it.</p>
+		<p>Stuff happened, I abandoned C coding a bit. But i kept coding
+		because i was also making the Leaf Engine.</p>
+		<p>I decided to study some assembly to complement my C knowlodge.</p>
+		<p>Now i'm here coding Leaf DOS (Leaf OS in early versions).</p>
+		
+		<h1 id="1.2">Kernel</h1>
+		<p>The kernel in Leaf DOS is the core of the operating system (thus a kernel!).</p>
+		<p>It is a monolitich kernel (all the stuff resides on the kernel memory space)
+		, but it is slowly planed to switch to a microkernel (arbitrarily load drivers)
+		so more functionality can be implemented.</p>
+		<p>The kernel has null security (real mode already does that), so antivirus
+		or any kind of counter-security is not gonna be planned on a future (yet).</p>
+		
+			<h2 id="1.2.1">What the kernel can do</h2>
+			<ul>
+				<li>
+					<p>Load software</p>
+				</li>
+				<li>
+					<p>Provide a shell interface</p>
+				</li>
+				<li>
+					<p>Provide programs will call routines (API)</p>
+				</li>
+				<li>
+					<p>Load foreing software (see <a href="#1.4">Compatibility with other OSes</a></p>
+				</li>
+			</ul>
+		
+			<h2 id="1.2.2">What the kernel cannot do</h2>
+			<ul>
+				<li>
+					<p>Provide in-built shell programs/commands (all commands are programs!)</p>
+				</li>
+				<li>
+					<p>Provide a GUI</p>
+				</li>
+				<li>
+					<p>Have any form of security (it's not worth it on real-mode)</p>
+				</li>
+				<li>
+					<p>Load MS-DOS/FreeDOS programs (see <a href="#1.4">Compatibility with other OSes</a></p>
+				</li>
+			</ul>
+			
+		<h1 id="1.3">Operating system schemes</h1>
+		<p>It's time for schemes!. Those arent implemented features at time of writing, but
+		here are some schemes on planning.</p>
+		<img src="PIZZA_STACK.png" width="640px" height="320px"></img>
+		<br></br> <!-- some nice break here -->
+		<code>How does communication betwen LeafDOS is planned to work</code>
+		
+		<p>This is a partially-implemented feature, (eveyrthing is implemented but
+		the driver memory space).</p>
+		<img src="MEMORY_GRAPH.png" width="640px" height="640px"></img>
+		<br></br> <!-- some nice break here -->
+		<code>How does memory in Leaf DOS is managed</code>
+		
+		<h1 id="1.4">Compatibility with other OSes</h1>
+		<p>Compatibility with other operating systems is limited, however there are some binary
+		compatibilities between Leaf DOS programs and other operating system software:</p>
+		<table border="solid">
+			<tr>
+				<td>
+					<p>Operating System</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.0</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.1</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.2</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.3</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.4</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.5</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.6</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.7</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.8</p>
+				</td>
+				<td>
+					<p>LDOS 0.1.9</p>
+				</td>
+				<td>
+					<p>LDOS 0.2.0</p>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<p>None (Flat Binary)</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>???</p>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<p>Leaf DOS</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>Yes</p>
+				</td>
+				<td>
+					<p>???</p>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					<p><a href="#1.6">Add your OS here</a></p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>No</p>
+				</td>
+				<td>
+					<p>???</p>
+				</td>
+			<tr>
+		</table>
+		
+		<h1 id="1.5">Credits</h1>
+		<ul>
+			<li>
+				<p><a href="jesusantonio30122016@gmail.com">Jesus Antonio Diaz</a>
+				Coding the OS, desinging this webpage, Leaf DOS logo and ilustrations
+				and the AFPFS filesystem theory.</p>
+			</li>
+		</ul>
+		
+		<h1 id="1.6">Collaborating</h1>
+		<p>If you want to collaborate do a pull request on Leaf DOS github, or simply e-mail the source
+		to me at <a href="jesusantonio30122016@gmail.com">Jesus Antonio Diaz</a>.
+		Attribution will be given obviously (in the file and in the Credits section
+		of this page).</p>
+		<p>If you want your OS to be compatible with Leaf DOS feel free to do so.</p>
+		<p>If it's the other way around (Leaf DOS being compatible with your OS), feel
+		free to e-mail me the source code/theory/resources or anything needed to be
+		compatible with your OS.</p>
+		
+	</body>
+</html>
