@@ -15,6 +15,104 @@
 ;
 ;=======================================================================
 	
+;=======================================================================
+;io.disk
+;=======================================================================
+	
+[segment .text]
+	
+;in = di: place to put file list
+;out = cf: clear if sucess, di: file list, sperated by commas
+io_disk_get_file_list:
+	mov word [.list_loc], di ;save where to put list
+	mov ax, 1
+	call near io_disk_logical_to_hts
+	mov si, __buffer__ ;make int 13h put stuff on our buffer
+	mov bx, si
+	
+	mov ah, 2
+	mov al, __all_sectors__ ;read some sectors
+	pusha
+	
+.read_disk:
+	popa
+	pusha
+	
+	stc
+	int 13h
+	jnc short .find_files
+	call near io_disk_reset
+	jnc short .read_disk
+	
+	jmp short .err
+.find_files:
+	popa
+	mov cx, 4096
+	mov si, bx
+.find_eof:
+	lodsw ;get word
+	
+	cmp ax, 0ff8h
+	je short .found_eof
+	
+	inc bx ;increment bx, aka buffer location
+	inc bx ;by a word...
+	
+	loop .find_eof ;loop a lot
+	jmp short .err
+	
+.found_eof:
+	mov word [.first_eof_loc], bx ;save first eof location
+	mov si, bx ;put bx in si
+	mov di, word [.list_loc]
+	
+	mov cx, __afpfs_default__
+.read_filename:
+	;read first filename...
+	lodsb ;get filename...
+	stosb ;save filename...
+	inc bx ;incrmeent bx like di, so we help find_next_eof
+	loop .read_filename
+	
+	mov al, ','
+	stosb ;place a separator
+	
+	jmp short .find_next_eof
+	
+.find_next_eof:
+	mov cx, 4096
+	mov si, bx ;place bx in si
+	mov di, bx ;do an ok
+.next:
+	lodsw ;get word
+	
+	cmp ax, 0ff8h
+	je short .read_filename ;eof found, now read filename
+	
+	loop .next
+	jmp short .end ;no eof found? bail out!
+	
+.end:
+	;place a null thingy
+	xor al, al
+	stosb ;done
+	
+	popa
+	clc
+	retn
+	
+[segment .bss]
+	
+	.list_loc					resw 1
+	.first_eof_loc				resw 1
+	
+[segment .text]
+	
+.err:
+	popa
+	stc
+	retn
+	
 ;in = ax: logical sector
 ;out = cl: sector, dh: head, ch: track, dl: drive
 io_disk_logical_to_hts:
@@ -43,87 +141,107 @@ io_disk_logical_to_hts:
 	mov dl, byte [disk_drive_number] ;save device number
 	ret
 	
-;in = si: filename, ax: segment to load file to
+;in = si: filename, bx: offset to load file to
 ;out = cf: clear if sucess
 io_disk_read_file:
-	moV word [.filename], si
-	moV word [.segment], ax
-	moV ax, 1
-	call io_disk_logical_to_hts
-	moV si, __buffer__
-	moV bx, ds
-	moV es, bx
-	moV bx, si
-	moV ah, 2
-	moV al, 24 ;read all sectors
+	mov word [.filename], si
+	mov word [.offs], bx
+	
+	mov si, __buffer__ ;make everything to point at disk buffer
+	mov bx, si
+	
+	mov ax, 1 ;start from first sector
+	call near io_disk_logical_to_hts
+	
+	mov al, 25 ;read some sectors...
 	pusha
 .read_disk:
 	popa
 	pusha
-	stc
-	int 13h
-	jnc .prepare_buffer
-	call io_disk_reset ;error on disk?
-	jnc .read_disk
+	
+	call io_disk_read_sector
+	
+	jnc short .prepare_buffer
+	call near io_disk_reset ;error on disk?
+	jnc short .read_disk
 	;error
 	stc
 	ret
 .prepare_buffer:
 	popa
 	pusha
-	moV ax, ds ;now it points to our buffer
-	moV es, ax
-	moV di, __buffer__
+	mov di, __buffer__
 	xor ax, ax
-	moV word [.sect], ax ;sector is zero, for now
+	mov word [.sect], ax ;sector is zero, for now
 .find_filename:
 	add word [.sect], 1 ;add one sector per loop
-	moV cx, 512 ;read sector per sector
+	mov cx, 512 ;read sector per sector
 .loop:
 	xchg cx, dx
-	moV si, data_program_to_load
-	moV cx, 9
+	mov si, data_program_to_load
+	mov cx, 9
 	rep cmpsb
 	je short .found_file
 	add ax, 1
-	moV di, __buffer__
+	mov di, __buffer__
 	add di, ax
 	xchg dx, cx
 	loop .loop
-	cmp word [.sect], 16 ;more than total sectors!
-	jge .not_found
-	jmp .find_filename ;another sector...
+	cmp word [.sect], 25 ;more than total sectors!
+	jge short .not_found
+	jmp short .find_filename ;another sector...
 .found_file:
-	moV ax, word [.segment] ;make es:bx to point to our load place
-	moV es, ax
-	moV bx, 0
+	mov bx, word [.offs]
 
-	moV ax, word [.sect] ;sector where file is
-	call io_disk_logical_to_hts
+	mov ax, word [.sect] ;sector where file is
+	call near io_disk_logical_to_hts
 	
-	moV ah, 2 ;read from the cluster we found the filename
-	moV al, 18
+	mov al, 10 ;read this many sectors, again...
+	call io_disk_read_sector
 	
-	stc
-	int 13h
-	jnc .end
-	call io_disk_reset ;if there is error, reset floppY
-	jmp .found_file
+	jnc short .end
+	call near io_disk_reset ;if there is error, reset floppY
+	jmp short .found_file
 .end:
 	popa
+	
+	;remove filename from data
+	pusha
+	mov si, __program__+__afpfs_default__ ;eliminate file metadata
+	mov di, __program__ ;put to first byte
+	mov cx, 8192
+	call near io_memory_copy
+	popa
+	
 	clc
-	ret
+	retn
 	
 .not_found:
 	popa
 	stc
+	retn
+	
+[segment .bss]
+	
+	.ptr						resw 1
+	.sect						resw 1
+	.filename					resw 1
+	.offs						resw 1
+	
+[segment .text]
+	
+;in = [es:bx] place to plot sector data, cl: no. of sectors to read
+;out = carry flag clear if not ok
+io_disk_read_sector:
+	pusha
+	mov ah, 02h
+	stc
+	int 13h
+	popa ;incase registers where altered
 	ret
 	
-	.ptr						dw 0
-	.sect						dw 0
-	.filename					dw 0
-	.segment					dw 0
-	
+;in = n/a
+;out = n/a
 io_disk_reset:
 	push ax
 	push dx
@@ -135,19 +253,179 @@ io_disk_reset:
 	
 	pop dx
 	pop ax
-	ret
+	retn
 	
 ;=======================================================================
-;
-;io.display - video and display routines, anything graphical
-;
+;io.display
 ;=======================================================================
+	
+;in = n/a
+;out =	al:	Adapter Vendor
+;		ah: Revision
+;Table of returns
+;AL				AH
+;00h			00h		AHEAD Video Adapter
+;01h			00h		Paradise Video Adapter
+;02h			00h		Oak Tech Video Adapter
+;ffh			ffh		Unknown Adapter
+io_display_check_video_adapters:
+	push es
+	;first check for AHEAD adapters
+	mov ax, 0C000h
+	mov es, ax
+	mov si, 0025h ;C000h:0025h
+	
+	xor ah, ah ;clear ah
+	
+	mov al, byte [si]		;A
+	push ax
+	mov al, byte [si+1]		;H
+	push ax
+	mov al, byte [si+2]		;E
+	push ax
+	mov al, byte [si+3]		;A
+	push ax
+	mov al, byte [si+4]		;D
+	push ax
+	jmp .check_ahead_adapter
+	
+.no_ahead_adapter:
+	;there are no AHEAD adapters
+	
+	;check for paradise adapters
+	mov si, 007dh	;C000h:007dh
+	
+	mov al, byte [si]		;V
+	push ax
+	mov al, byte [si+1]		;G
+	push ax
+	mov al, byte [si+2]		;A
+	push ax
+	mov al, byte [si+3]		;=
+	push ax
+	
+	jmp .check_paradise_adapter
+	
+.no_paradise_adapter:
+	;there are no paradise adapters
+	
+	;check for oak tech adapters
+	mov si, 0008h
+	
+	mov al, byte [si]		;O
+	push ax
+	mov al, byte [si]		;A
+	push ax
+	mov al, byte [si]		;K
+	push ax
+	mov al, byte [si]		;space
+	push ax
+	mov al, byte [si]		;V
+	push ax
+	mov al, byte [si]		;G
+	push ax
+	mov al, byte [si]		;A
+	push ax
+	
+	jmp .check_oak_tech_adapter
+	
+.no_oak_tech_adapter:
+	;there are no oak tech adapters
+	
+	mov al, 0ffh ;unknown
+	mov ah, 0ffh
+	
+.end:
+	pop es
+	ret
+	
+.check_ahead_adapter:
+	pop ax ;get stuff back
+	cmp al, 'D'
+	jne .no_ahead_adapter
+	
+	pop ax
+	cmp al, 'A'
+	jne .no_ahead_adapter
+	
+	pop ax
+	cmp al, 'E'
+	jne .no_ahead_adapter
+	
+	pop ax
+	cmp al, 'H'
+	jne .no_ahead_adapter
+	
+	pop ax
+	cmp al, 'A'
+	jne .no_ahead_adapter
+	
+	xor al, al	;al = 00h
+	xor ah, ah	;ah = 00h
+	
+	jmp .end ;give result to caller
+	
+.check_paradise_adapter:
+	pop ax ;get stuff back
+	cmp al, '='
+	jne .no_paradise_adapter
+	
+	pop ax
+	cmp al, 'A'
+	jne .no_paradise_adapter
+	
+	pop ax
+	cmp al, 'G'
+	jne .no_paradise_adapter
+	
+	pop ax
+	cmp al, 'V'
+	jne .no_paradise_adapter
+	
+	mov al, 1	;al = 01h
+	xor ah, ah	;ah = 00h
+	
+	jmp .end ;give result to caller
+	
+.check_oak_tech_adapter:
+	pop ax ;get stuff back
+	cmp al, 'A'
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, 'G'
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, 'V'
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, ' '
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, 'K'
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, 'A'
+	jne .no_oak_tech_adapter
+	
+	pop ax
+	cmp al, 'O'
+	jne .no_oak_tech_adapter
+	
+	mov al, 2	;al = 02h
+	xor ah, ah	;ah = 00h
+	
+	jmp .end ;give result to caller
 	
 ;in = ah: color, al: character
 ;out = n/a
 io_display_clear_text_screen:
 	pusha
-	push es
+	push es                                                                       
 	
 	mov cx, ax ;save stuff in ax
 
@@ -162,16 +440,32 @@ io_display_clear_text_screen:
 	
 .loop:
 	cmp di, ax
-	je .end
+	je short .end
 	
 	mov word [es:di], cx ;repeat...
 	
 	inc di ;advance by a word
 	inc di
 	
-	jmp .loop
+	jmp short .loop
 .end:
 	pop es
+	popa
+	ret
+	
+;in = n/a
+;out = n/a (and no more blinky :( )
+io_display_disable_text_mode_cursor:
+	pusha
+	
+	mov dx, 03d4h ;send to vga register that we dont want cursor
+	mov al, 0ah
+	out dx, al
+	
+	inc dx
+	mov al, 020h
+	out dx, al
+	
 	popa
 	ret
 	
@@ -209,23 +503,67 @@ io_display_enable_text_mode_cursor:
 	pop ax
 	ret
 	
-	.data_end		db 0
-	.data_start	db 0
+[segment .bss]
+	.data_end		resb 1
+	.data_start		resb 1
+	
+[segment .text]
+	
+;in = ax: x, bx: y
+;out = dl: colour
+io_display_get_pixel:
+	pusha
+	push es
+	push ax
+	push dx
+	mov ax, word [data_graphics_memory]
+	mov es, ax ;point to the graphical memory (cga/vga/tandy/hercules, etc)
+	
+	test bx, bx
+	jz short .first_line
+	
+	mov ax, word [data_graphics_mode_wide]
+	mul bx ;y*wide = addr-x
+	mov cx, ax ;save result in cx
+	
+.first_line:
+	pop dx
+	pop ax ;get the original x back
+	
+	add cx, ax ;(y*tall)+x = addr
+	mov si, cx ;tell si we want to get something from addr
+	
+	lodsb ;put the stuff in al
+	
+	mov dl, al ;plot in dl, because print_pixel
+	
+	pop es
+	popa
+	ret
 	
 ;in = n/a
-;out = n/a (and no more blinky :( )
-io_display_disable_text_mode_cursor:
-	pusha
+;out = al:	feh = Mono
+;			ffh = Colour
+io_display_get_current_video_mode:
+	push bx
 	
-	mov dx, 03d4h ;send to vga register that we dont want cursor
-	mov al, 0ah
-	out dx, al
+	mov ah, 0fh
+	int 10h
 	
-	inc dx
-	mov al, 020h
-	out dx, al
+	cmp al, 03h
+	je short .color
 	
-	popa
+	cmp al, 07h
+	je short .mono
+	jmp short .end
+.mono:
+	mov al, 0feh
+	jmp short .end
+.color:
+	mov al, 0ffh
+	jmp short .end
+.end:
+	pop bx
 	ret
 	
 ;in = al: chatacter
@@ -268,7 +606,14 @@ io_display_print_char:
 	
 	cmp di, 4000
 	jae short .scroll
-
+	
+	push ax
+	mov al, byte [data_text_mode_wide]
+	mov ah, byte [data_text_x]
+	cmp ah, al
+	jae short .wrap
+	pop ax
+	
 	stosw ;place it in the video memory
 	
 	inc byte [data_text_x] ;finaly increment x by one
@@ -287,8 +632,14 @@ io_display_print_char:
 	jmp short .end
 .scroll:
 	stosw ;place character before scrolling
-	call io_display_scroll_down
+	call near io_display_scroll_down
 	inc byte [data_text_x]
+	jmp short .end
+.wrap:
+	pop ax
+	stosw
+	inc byte [data_text_y]
+	mov byte [data_text_x], 0
 	jmp short .end
 .newline:
 	inc byte [data_text_y]
@@ -299,7 +650,41 @@ io_display_print_char:
 	popa
 	ret
 	
-	.data_character	db 0
+[segment .bss]
+	.data_character	resb 1
+	
+[segment .text]
+	
+;in = ax: x, bx: y, dl: colour
+;out = n/a
+io_display_print_pixel:
+	pusha
+	push es
+	push ax
+	push dx
+	mov ax, word [data_graphics_memory]
+	mov es, ax ;point to the graphical memory (cga/vga/tandy/hercules, etc)
+	
+	test bx, bx
+	jz short .first_line
+	
+	mov ax, word [data_graphics_mode_wide]
+	mul bx ;y*wide = addr-x
+	mov cx, ax ;save result in cx
+	
+.first_line:
+	pop dx
+	pop ax ;get the original x back
+	
+	add cx, ax ;(y*tall)+x = addr
+	mov di, cx ;tell di we want to put something in addr
+	
+	mov al, dl ;color of pixel
+	stosb ;place al
+	
+	pop es
+	popa
+	ret
 	
 ;in = si: string
 ;out = n/a
@@ -309,10 +694,10 @@ io_display_print_text:
 	lodsb
 	
 	test al, al
-	jz .end
+	jz short .end
 	
-	call io_display_print_char
-	jmp .loop
+	call near io_display_print_char ;print a char
+	jmp short .loop
 .end:
 	pop ax
 	ret
@@ -330,12 +715,6 @@ io_display_scroll_down:
 	;destination is to the first line
 	xor di, di
 	
-	;source is the line below
-	;movzx ax, byte [data_text_mode_tall]
-	;movzx bx, byte [data_text_mode_wide]
-	;mul bx
-	;xchg bx, ax ;bx now holds ax
-	
 	movzx si, byte [data_text_mode_wide]
 	shl si, 1
 	
@@ -344,7 +723,7 @@ io_display_scroll_down:
 	mov word [es:di], ax ;place the word in dest.
 	
 	cmp bx, 2000
-	jae .end
+	jae short .end
 	
 	inc bx
 	
@@ -354,7 +733,7 @@ io_display_scroll_down:
 	inc di
 	inc di
 	
-	jmp .loop
+	jmp short .loop
 .end:
 	
 	mov al, byte [data_text_mode_tall] ;tall-1 = new position
@@ -364,6 +743,17 @@ io_display_scroll_down:
 	
 	pop es
 	popa
+	ret
+	
+;in = al: video mode
+;out = n/a
+io_display_set_video_mode:
+	pusha
+	
+	xor ah, ah ;ah 00h
+	int 10h ;do the interrupt
+	
+	popa ;restore registers
 	ret
 	
 ;in = bl: cursor x, bh: cursor y
@@ -401,9 +791,7 @@ io_display_update_text_mode_cursor:
 	ret
 	
 ;=======================================================================
-;
-;io.keyboard - input/user input stuff
-;
+;io.keyboard
 ;=======================================================================
 	
 ;in = ch: number of chars to read, di: buffer
@@ -412,47 +800,47 @@ io_keyboard_input:
 	pusha
 	xor cl, cl
 .loop:
-	call io_keyboard_keypress
+	call near io_keyboard_keypress
 	
 	push bx
 	mov bl, byte [data_text_x]
 	mov bh, byte [data_text_y]
-	call io_display_update_text_mode_cursor
+	call near io_display_update_text_mode_cursor
 	pop bx
 	
 	cmp al, 10 ;newline (enter)
-	je .end
+	je short .end
 	cmp al, 13
-	je .end
+	je short .end
 	cmp al, 8 ;backspace
-	je .back
+	je short .back
 	cmp cl, ch ;did we inputed more chars than the ones we should?
-	jge .end
+	jae short .end
 .print_part:
 	call io_display_print_char
 	inc cl
 	stosb
-	jmp .loop
+	jmp short .loop
 .back:
 	cmp cl, 0 ;remove character from string
-	je .loop ;keep cursor from choking
+	je short .loop ;keep cursor from choking
 	dec di
 	mov byte [di], 0
 	dec cl
 	
 	mov al, 8 ;retroceed one character
-	call io_display_print_char
+	call near io_display_print_char
 	mov al, ' ' ;display a space
-	call io_display_print_char
+	call near io_display_print_char
 	mov al, 8 ;when we displayed a space we advanced a character, go and retroceed again...
-	call io_display_print_char
+	call near io_display_print_char
 	
 	push bx
 	mov bl, byte [data_text_x]
 	mov bh, byte [data_text_y]
-	call io_display_update_text_mode_cursor ;update cursor, so it dosent chokes
+	call near io_display_update_text_mode_cursor ;update cursor, so it dosent chokes
 	pop bx
-	jmp .loop
+	jmp short .loop
 .end:
 	xor al, al
 	stosb
@@ -467,16 +855,98 @@ io_keyboard_keypress:
 	ret
 	
 ;=======================================================================
-;
-;io.serial - in-built serial driver routines
-;
+;io.memory
+;=======================================================================
+	
+;in = n/a
+;out = ax: kib of memory, cf: sucess/err
+io_memory_check_low_memory:
+	clc
+	int 20h
+	ret
+	
+;in = si: source, di: destination, cx: bytes to copy
+;out = n/a
+io_memory_copy:
+	pusha
+.loop:
+	lodsb ;get and
+	stosb ;put
+	
+	loop .loop
+.end:
+	popa
+	retn
+
+;in = al: byte to copy, di: destination, cx: times to copy char
+;out = n/a
+io_memory_copy_byte:
+	pusha
+.loop:
+	cmp cx, 0 ;if we ended, end
+	je short .end
+	mov byte [di], al ;copy al to di
+	inc di
+	dec cx
+	jmp short .loop
+.end:
+	popa
+	ret
+	
+;=======================================================================
+;io.parallel
+;=======================================================================
+	
+;in = n/a
+;out = cl: number of available ports
+io_parallel_ports_check:
+	push ax
+	push bx
+	push es
+	
+	xor cl, cl
+	
+	mov ax, 0040h
+	mov es, ax
+	
+	mov bx, 08h
+	mov ax, word [es:bx] ;get first parallel word...
+	test ax, ax
+	jz short .end
+	inc cl ;cl = 1
+	
+	mov bx, 0ah
+	mov ax, word [es:bx] ;get second parallel word...
+	test ax, ax
+	jz short .end
+	inc cl ;cl = 2
+	
+	mov bx, 0ch
+	mov ax, word [es:bx] ;get third parallel word...
+	test ax, ax
+	jz short .end
+	inc cl ;cl = 3
+	
+	mov bx, 0eh
+	mov ax, word [es:bx] ;get fourth parallel word...
+	test ax, ax
+	jz short .end
+	inc cl ;cl = 4
+	
+.end:
+	pop es
+	pop bx
+	pop ax ;restore all registers
+	ret
+	
+;=======================================================================
+;io.serial
 ;=======================================================================
 	
 ;in = dx: port number
 ;out = n/a
 io_serial_enable:
-	push ax
-	push dx
+	pusha
 	
 	add dx, 1
 	xor al, al
@@ -506,8 +976,7 @@ io_serial_enable:
 	mov al, 0bh
 	out dx, al ;irq enabled and dsr set
 	
-	pop dx
-	pop ax
+	popa
 	ret
 	
 ;in = dx: port address
@@ -518,7 +987,7 @@ io_serial_get_byte:
 	add dx, 5
 	in al, dx ;put stuff got from dx to al
 	and al, 1
-	jz .loop
+	jz short .loop
 	
 	sub dx, 5
 	
@@ -530,60 +999,60 @@ io_serial_get_byte:
 ;out = al: number of serial ports
 io_serial_ports_check:
 	push es
-	push si
-	push bx
-	push ax
+	pusha
 	
 	mov ax, 0040h
 	mov es, ax
-	mov bx, 0
+	xor bx, bx
 	
 	mov ax, word [es:bx] ;get first serial port
 	test ax, ax
-	jz near .no_first_serial_port ;nope
+	jz short .no_first_serial_port ;nope
 	;we have serial ports!
 .yes_first_serial_port:
 	mov bx, 2
 	
 	mov ax, word [es:bx] ;get second serial port
 	test ax, ax
-	jz near .no_second_serial_port ;no
+	jz short .no_second_serial_port ;no
 .yes_second_serial_port:
 	mov bx, 4
 	
 	mov ax, word [es:bx] ;get third serial port
 	test ax, ax
-	jz near .no_third_serial_port ;ok, no 3rd port
+	jz short .no_third_serial_port ;ok, no 3rd port
 .yes_third_serial_port:
 	mov bx, 6
 	
 	mov ax, word [es:bx] ;get fourth serial port
 	test ax, ax
-	jz near .no_third_serial_port ;oh, almost all ports
+	jz short .no_third_serial_port ;oh, almost all ports
 	mov byte [.data_ports], 4 ;all ports!
 .end:
-	pop ax
-	pop bx
-	pop si
+	popa
 	pop es ;segment restored!
 	mov al, byte [.data_ports]
 	ret
 	
 .no_first_serial_port:
 	mov byte [.data_ports], 0 ;zero ports, if there is no registry here
-	jmp near .end
+	jmp short .end
 .no_second_serial_port:
 	mov byte [.data_ports], 1 ;only one port
-	jmp near .end
+	jmp short .end
 .no_third_serial_port:
 	mov byte [.data_ports], 2 ;only two ports
-	jmp near .end
+	jmp short .end
 .no_fourth_serial_port:
 	mov byte [.data_ports], 3 ;only three ports
-	jmp near .end
+	jmp short .end
 	
-	.data_ports	db 0
-
+[segment .bss]
+	
+	.data_ports	resb 1
+	
+[segment .text]
+	
 ;in = dx: port address, al: byte to send
 ;out = n/a
 io_serial_send_byte:
@@ -614,7 +1083,7 @@ io_serial_send_bytes:
 	je short .end
 	
 	mov al, byte [si]
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
 	inc si ;next byte...
 	dec cx
@@ -629,26 +1098,26 @@ io_serial_ldstp_send_bytes:
 	pusha
 	;send byte of "incoming data"
 	mov al, 017h
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte ;get reply...
+	call near io_serial_get_byte ;get reply...
 	cmp al, 01ah ;computer is stupid and didnt understood
 	jne short .error
 	
 	;else if computer 2 understood...
 	mov al, 019h ;send byte of "size of packet"
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte ;get reply...
+	call near io_serial_get_byte ;get reply...
 	cmp al, 01bh ;how many the odds?
 	jne short .error
 	
 	;at this point, we will send a unsigned byte dicating the size of
 	;our packet
 	mov al, cl ;put size in al
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte
+	call near io_serial_get_byte
 	cmp al, 01ah
 	jne short .error
 	
@@ -660,18 +1129,18 @@ io_serial_ldstp_send_bytes:
 	je short .end
 	
 	lodsb ;get byte and send it
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
 	dec cx
 	jmp short .loop
 .end:
 	mov al, 01ah ;lets make sure computer finished analyzing data...
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte ;get reply...
+	call near io_serial_get_byte ;get reply...
 	
 	cmp al, 0bbh ;error, data trown or destroyed
-	je .error
+	je short .error
 	
 	popa
 	
@@ -688,21 +1157,21 @@ io_serial_ldstp_send_bytes:
 io_serial_ldstp_get_bytes:
 	pusha
 	;now we are at the other part of the table
-	call io_serial_get_byte ;get "data incoming" byte
+	call near io_serial_get_byte ;get "data incoming" byte
 	cmp al, 017h
 	jne short .abort
 	
 	mov al, 01ah ;send reply of "ok" byte
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte
+	call near io_serial_get_byte
 	cmp al, 019h ;get "size of packet" byte
 	jne short .abort
 	
 	mov al, 01bh ;send reply of "ok gimme data naw"
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
-	call io_serial_get_byte ;get size of packet to be sent
+	call near io_serial_get_byte ;get size of packet to be sent
 	
 	;hmm is this bigger than the buffer we allow!?
 	cmp cl, al
@@ -713,7 +1182,7 @@ io_serial_ldstp_get_bytes:
 	;nope, proceed
 	;send reply byte "ok i got ur stuff, now gimme me actual data naw"
 	mov al, 01ah
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	popa
 	pusha
 	xor cl, cl ;set cl to zero
@@ -722,7 +1191,7 @@ io_serial_ldstp_get_bytes:
 	je short .abort
 	
 	lodsb
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
 	inc cl ;decrement counter...
 	
@@ -731,152 +1200,36 @@ io_serial_ldstp_get_bytes:
 .end:
 	;when we finished receiving data, now we must send the "ok, finish"
 	;byte
-	call io_serial_get_byte
+	call near io_serial_get_byte
 	
 	cmp al, 01ah
-	jne .abort
+	jne short .abort
 	
 	mov al, 0bbh
-	call io_serial_send_byte ;done
+	call near io_serial_send_byte ;done
 	popa ;we finished!
 	clc
 	ret
 	
 .abort:
 	mov al, 0feh ;send error byte (auto cancels everything)
-	call io_serial_send_byte
+	call near io_serial_send_byte
 	
 	popa
 	stc
 	ret
 	
 ;=======================================================================
-;
-;io.memory - memory allocation and management routines
-;
+;io.string
 ;=======================================================================
-
-;in = si: source, di: destination, cx: bytes to copy
-;out = n/a
-io_memory_copy:
-	pusha
-.loop:
-	cmp cx, 0 ;did we ended yet?
-	je .end
-	mov al, byte [si]
-	mov byte [di], al
 	
-	inc di
-	inc si
-	dec cx
-	jmp .loop
-.end:
-	popa
-	ret
-
-;in = al: byte to copy, di: destination, cx: times to copy char
-;out = n/a
-io_memory_copy_byte:
-	pusha
-.loop:
-	cmp cx, 0 ;if we ended, end
-	je .end
-	mov byte [di], al ;copy al to di
-	inc di
-	dec cx
-	jmp .loop
-.end:
-	popa
-	ret
-	
-;in = n/a
-;out = nothing too important/critical ;)
-io_memory_destroy_table:
-	;i feel like i want to destroy my memory table
-	;im mad, i want to xor it compleltely
-	;and no one is gonna stop me
-	; - superleaf1995
-	push ax
-	push bx
-	push cx
-	push es
-	mov ax, __memory_table__
-	mov es, ax
-	xor bx, bx
-.destroy_entry_number:
-	;xor something, (useless since 0.1.5)
-	mov word [es:bx], 0
-.erase_entries:
-	;now lets delete all entries (useless since 0.1.5)
-	mov word [es:bx], 0
-	inc bx
-	cmp bx, 0fffah
-	jge .end
-	jmp .erase_entries
-.end:
-	pop es ;done >:)
-	pop cx
-	pop bx
-	pop ax
-	ret
-	
-;in = cx: segment, al: flag
-;out = entry in memory table
-io_memory_manage:
-	push ax
-	push bx
-	push cx
-	push es
-	
-	cmp cx, 2fffh ;no segments below program memory (3000h)
-	jle .error
-	jmp .error ;if not a valid flag, bail out
-.cont:
-	mov byte [.data_flag], byte al
-	
-	mov word [.data_table_seg], cx
-
-	;segmentate to memory table
-	mov ax, __memory_table__
-	mov es, ax
-	xor bx, bx
-.flag_it:
-	mov cx, word [.data_table_seg] ;look for segment
-	sub cx, 3000h ;substract reserved segments
-	mov bx, cx ;bx now points at entry
-	
-	;set the flag
-	mov byte al, [.data_flag]
-	mov byte [es:bx], byte al
-	
-	stc ;sucess!
-.end:
-	pop es
-	pop cx
-	pop bx
-	pop ax
-	ret
-
-.error:
-	clc
-	jmp .end
-
-	.data_table_seg		dw 0
-	.data_flag			db 0
-	
-;=======================================================================
-;
-;io.string - manage, search and cut strings at your will
-;
-;=======================================================================
-
 ;in = si: string, cx: place where character should be, al: character to find
 ;out = flag clear if true, else set if false
 io_string_check_character_in_location:
 	pusha
 	add si, cx
 	cmp byte [si], al
-	je .yes ;if yes, else do no
+	je short .yes ;if yes, else do no
 .no: ;no character in location
 	popa
 	stc
@@ -896,17 +1249,17 @@ io_string_compare:
 	mov ah, byte [di]
 	
 	cmp al, ah ;are they equal?
-	jne near .not_equal
+	jne short .not_equal
 	
 	test ax, ax ;did we got a zero?
-	jz near .equal
+	jz short .equal
 
 	add si, 1 ;increment one byte...
 	add di, 1
-	jmp .loop
+	jmp short .loop
 .not_equal:
 	clc
-	jmp .end
+	jmp short .end
 .equal:
 	stc
 .end:
@@ -921,10 +1274,10 @@ io_string_copy:
 	lodsb
 	
 	cmp al, 0
-	je .end
+	je short .end
 	
 	stosb
-	jmp .loop
+	jmp short .loop
 .end:
 	mov al, 0
 	stosb
@@ -972,17 +1325,22 @@ io_string_lenght:
 	xor cx, cx
 .loop:
 	cmp byte [si], 0 ;if al is zero
-	je .end
+	je short .end
 	
 	inc cx ;else keep adding
 	inc si
-	jmp .loop
+	jmp short .loop
 .end:
 	mov word [.data_lenght], cx
 	popa
 	mov cx, word [.data_lenght]
 	ret
-	.data_lenght		dw 0
+	
+[segment .bss]
+	
+	.data_lenght		resw 1
+	
+[segment .text]
 	
 ;in = si: string, di: resultant string, al: character to replace, ah: replacement for character al
 ;out = di: resultant string
@@ -993,15 +1351,15 @@ io_string_replace_character:
 .loop:
 	lodsb ;get character, plot it on al
 	cmp al, dl ;if al = dl, then we have a character to replace
-	je .rep ;time to replace
+	je short .rep ;time to replace
 	cmp al, 0
-	je .end
+	je short .end
 	stosb
-	jmp .loop
+	jmp short .loop
 .rep:
 	mov al, dh
 	stosb
-	jmp .loop
+	jmp short .loop
 .end:
 	mov al, 0
 	stosb
@@ -1012,7 +1370,7 @@ io_string_replace_character:
 ;out = di: reversed string
 io_string_reverse:
 	pusha
-	call io_string_lenght
+	call near io_string_lenght
 	mov word [.data_lenght], cx
 	mov di, si
 	add di, word [.data_lenght]
@@ -1025,37 +1383,88 @@ io_string_reverse:
 	inc si
 	dec di
 	cmp di, si
-	ja .loop
+	ja short .loop
 .end:
 	popa
 	ret
 	
-	.data_lenght dw 0
+[segment .bss]
 	
+	.data_lenght resw 1
 	
-;in = si: string, di: tokenized string, al: separator character
-;out = di: tokenized string
+[segment .text]
+	
+;in = si: string, al: separator character
+;out = ax: str 1, bx: 2, cx: 3, etc Null if no string
 io_string_tokenize:
-	pusha
-	mov dl, al ;save al in dl
-.loop:
-	lodsb ;get character, plot it on al
-	cmp al, dl ;if al = dl, then we have a separator!
-	je .divide ;time to divide
-	cmp al, 0
-	je .end
+	push di ;only push indexes, regs are gonna get rekt
+	push si
 	
-	stosb ;if its a normal character just put it
-	jmp .loop
-.divide:
-	mov al, 0 ;make separator into null
-	stosb
-	jmp .loop
+	mov byte [.char], al
+	
+	xor dx, dx ;clear all registers
+	xor cx, cx
+	xor bx, bx
+	xor ax, ax
+	
+.loop:
+	lodsb
+	
+	cmp byte [.char], al ;if the separator is reached...
+	je short .div_string
+	
+	test al, al ;if null character, end
+	jz short .end
+	
+	jmp short .loop
+.div_string:
+	mov ax, si ;put stuff in ax
+.loop_2:
+	lodsb
+	
+	cmp byte [.char], al ;if the separator is reached...
+	je short .div_string_2
+	
+	test al, al ;if null character, end
+	jz short .end
+	
+	jmp short .loop_2
+.div_string_2:
+	mov bx, si ;put stuff in bx
+.loop_3:
+	lodsb
+	
+	cmp byte [.char], al ;if the separator is reached...
+	je short .div_string_3
+	
+	test al, al ;if null character, end
+	jz short .end
+	
+	jmp short .loop_3
+.div_string_3:
+	mov cx, si ;put stuff in cx
+.loop_4:
+	lodsb
+	
+	cmp byte [.char], al ;if the separator is reached...
+	je short .div_string_4
+	
+	test al, al ;if null character, end
+	jz short .end
+	
+	jmp short .loop_4
+.div_string_4:
+	mov dx, si ;put stuff in dx
 .end:
-	mov al, 0
-	stosb
-	popa
+	pop si
+	pop di
 	ret
+	
+segment .bss
+	
+	.char	resb 1
+	
+[segment .text]
 	
 ;in = si: keyboard buffer (exprg.com), di: place to put afpfs filename
 ;out = di: afpfs readable filename (exprg  com)
@@ -1065,23 +1474,23 @@ io_string_to_afpfs_filename:
 .loop:
 	lodsb
 	cmp al, 0 ;null terminator
-	je .end
+	je short .end
 	cmp al, '.' ;dot
-	je .space_loop
+	je short .space_loop
 	cmp cx, 10 ;more than 11 chars
-	jge .end
+	jge short .end
 	inc cx
 	stosb ;else put the char
-	jmp .loop
+	jmp short .loop
 .space_loop: ;put spaces, until we fit 8.
 	cmp cx, 6
-	je .loop
+	je short .loop
 	mov al, ' '
 	stosb
 	inc cx
 	cmp cx, 8
-	jl .space_loop
-	jmp .loop
+	jl short .space_loop
+	jmp short .loop
 .end:
 	mov al, 0
 	stosb
@@ -1089,9 +1498,7 @@ io_string_to_afpfs_filename:
 	ret
 	
 ;=======================================================================
-;
-;io.system - system related stuff, not os, but rather essential routines
-;
+;io.system
 ;=======================================================================
 	
 ;in = n/a
@@ -1106,7 +1513,7 @@ io_system_reboot:
 io_system_timer:
 	pusha
 	test ax, ax
-	jz .end ;zero lenght means no action done
+	jz short .end ;zero lenght means no action done
 	
 	mov word [.data_counter], 0 ;save timer in word
 	
@@ -1124,20 +1531,24 @@ io_system_timer:
 	int 1ah
 	
 	cmp dx, [data_ticks_per_second]
-	jne .update
-	jmp .loop
+	jne short .update
+	jmp short .loop
 .update:
 	inc word [.data_counter]
 	mov ax, word [.data_counter]
 	
 	cmp ax, word [data_requested_timer]
-	jge .end
+	jge short .end
 	
 	mov word [data_ticks_per_second], dx
 	
-	jmp .loop
+	jmp short .loop
 	
-	.data_counter	dw 0
+[segment .bss]
+	
+	.data_counter	resw 1
+	
+[segment .text]
 	
 .end:
 	popa
