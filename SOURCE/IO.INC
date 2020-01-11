@@ -117,4 +117,6 @@ __afpfs_default__						equ 9 ;size of filename
 		io_display_set_video_mode								equ 120
 		io_memory_check_low_memory								equ 123
 		io_parallel_ports_check									equ 126
+		
+		io_disk_find_file										equ 129
 %endif

@@ -20,6 +20,72 @@
 ;=======================================================================
 	
 [segment .text]
+
+;in = si: filename, bx: offset to load file to
+;out = cf: clear if found
+io_disk_find_file:
+	mov word [.filename], si
+	mov word [.offs], bx
+	
+	mov si, __buffer__ ;make everything to point at disk buffer
+	mov bx, si
+	
+	mov ax, 1 ;start from first sector
+	call near io_disk_logical_to_hts
+	
+	mov al, 25 ;read some sectors...
+	pusha
+.read_disk:
+	popa
+	pusha
+	
+	call io_disk_read_sector
+	
+	jnc short .prepare_buffer
+	call near io_disk_reset ;error on disk?
+	jnc short .read_disk
+	;error
+	stc
+	ret
+.prepare_buffer:
+	popa
+	pusha
+	mov di, __buffer__
+	xor ax, ax
+	mov word [.sect], ax ;sector is zero, for now
+.find_filename:
+	add word [.sect], 1 ;add one sector per loop
+	mov cx, 512 ;read sector per sector
+.loop:
+	xchg cx, dx
+	mov si, data_program_to_load
+	mov cx, 9
+	rep cmpsb
+	je short .found_file
+	add ax, 1
+	mov di, __buffer__
+	add di, ax
+	xchg dx, cx
+	loop .loop
+	cmp word [.sect], 25 ;more than total sectors!
+	jge short .not_found
+	jmp short .find_filename ;another sector...
+.found_file:
+	popa
+	clc
+	retn
+
+.not_found:
+	popa
+	stc
+	retn
+	
+[segment .bss]
+	
+	.ptr						resw 1
+	.sect						resw 1
+	.filename					resw 1
+	.offs						resw 1
 	
 ;in = di: place to put file list
 ;out = cf: clear if sucess, di: file list, sperated by commas

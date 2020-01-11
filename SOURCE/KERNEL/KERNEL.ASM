@@ -64,6 +64,9 @@ call_references:
 		jmp io_memory_check_low_memory
 		jmp io_parallel_ports_check
 		
+		;~~ for next release ~~
+		jmp io_disk_find_file
+				
 %include "io.asm"
 	
 io_start:
@@ -279,7 +282,7 @@ io_kernel_main:
 	text_kernel_filename								db 'KERNELSYS',0 ;prevent user from loading kernel
 	text_dos_name										db 'Leaf DOS',0 ;dos name
 	text_error_unknown_command							db 'not found',0
-	text_dos_version									db '0.1.9 (Beta Release)',0 ;io and dos version
+	text_dos_version									db '0.1.9 (Alpha Release (001))',0 ;io and dos version
 	text_io_name										db 'IO Library',0 ;io name
 	text_drive_letter									db ':\>',0
 	
