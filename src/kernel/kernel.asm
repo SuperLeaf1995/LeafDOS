@@ -4,6 +4,17 @@ org 0
 
 buffer			equ	24576
 
+jmp short start
+
+jmp near _fopen		;003
+jmp near _printf	;006
+jmp near _putc		;009
+jmp near _flist		;012
+jmp near _memcpy	;015
+jmp near _memcmp	;018
+jmp near _strfat12	;021
+jmp near _dumpregs	;024
+
 start:
 	xor ax, ax
 	cli
@@ -13,8 +24,6 @@ start:
 	sti
 	cld
 	mov ax, 0500h
-	mov fs, ax
-	mov gs, ax
 	mov es, ax
 	mov ds, ax
 	
@@ -60,6 +69,13 @@ start:
 	mov di, kernel_buffer.fat12
 	call _strfat12
 	
+	mov al, 0Dh
+	call _putc
+	mov si, kernel_buffer.fat12
+	call _printf
+	mov al, 0Dh
+	call _putc
+	
 	mov si, kernel_buffer.fat12
 	mov ax, 32768
 	call _fopen
@@ -104,4 +120,7 @@ kernel_buffer:
 	.keyboard			times 128 db 0
 	.fat12				times 128 db 0
 
-%include "src/internal.asm"
+%include "fat12.asm"
+%include "debug.asm"
+%include "stdio.asm"
+%include "fs.asm"

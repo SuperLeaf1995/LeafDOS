@@ -1,11 +1,5 @@
 # LeafDOS
-LeafDOS is a real mode, 16 bit diskette operating system that can fit on a 160k floppy.
+LeafDOS is a monotasking (and soon.. multitasking!), real-mode 16-bit operating system.
 
-# Porpouse
-Make a stable DOS (nothing related to MS-DOS/FreeDOS), that can have in-built mouse support, in-built PS/2 keyboard and mouse driver, instead of having to install It (i.e MOUSE.COM). Having Hércules, CGA and VGA native support, and use as less interrupts possible, while still being in real mode.
-
-# How Is the Shell?
-There are no in-built commands, everything is a program that answers to the command ala MS-DOS. (Except Kernel.sys)
-
-# AFPFS what?
-See https://wiki.osdev.org/User:Superleaf1995/AFPFS for a short explaination of what Is AFPFS.
+# Purpouse
+Be compatible with 8086, have all needed drivers and basically be a operating system that supports as many file-formats/operating-systems as possible, while running on something bare as the 8086.

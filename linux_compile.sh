@@ -4,10 +4,16 @@
 rm -f bin/*
 
 #compile assembly
+cd src
+cd boot
 echo ":: Assembling Bootloader"
-nasm -O0 -fbin -Wall src/boot/bootloader.asm -o bin/bootloader.boot
+nasm -O0 -fbin -Wall bootloader.asm -o ../../bin/bootloader.boot
+cd ..
+cd kernel
 echo ":: Assembling Kernel"
-nasm -O0 -fbin -Wall src/kernel.asm -o bin/kernel.sys
+nasm -O0 -fbin -Wall kernel.asm -o ../../bin/kernel.sys
+cd ..
+cd ..
 
 for i in src/programs/*.asm
 do
