@@ -1,5 +1,5 @@
 use16
-cpu 186
+cpu 8086
 org 0
 
 jmp short start
@@ -146,7 +146,10 @@ read_file:
 	or dx, dx ;is our cluster even or odd?
 	jz short .even_cluster
 .odd_cluster:
-	shr ax, 4
+	push cx
+	mov cl, 4
+	shr ax, cl
+	pop cx
 	jmp short .check_eof
 .even_cluster:
 	and ax, 0FFFh
@@ -171,11 +174,24 @@ read_file:
 .pointer			dw 0
 
 read_sector:
+	push ax
 	mov ah, 2
-	pusha
+	
+	push ax
+	push bx
+	push cx
+	push dx
 .loop:
-	popa
-	pusha
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	push ax
+	push bx
+	push cx
+	push dx
+	
 	stc
 	int 13h
 	jnc short .end
@@ -183,7 +199,12 @@ read_sector:
 	jnc short .loop
 	jmp short read_error
 .end:
-	popa
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	pop ax
 	ret
 
 reset_drive:

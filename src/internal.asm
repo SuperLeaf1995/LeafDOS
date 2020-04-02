@@ -1,41 +1,112 @@
-;@name:			print_char
+;@name:			putc
 ;@desc:			prints a char
 ;@param:		al: character
 ;@return:		n/a
-print_char:
-	push ax ;print character right away
-	mov ah, 0Eh
-	int 10h
+_putc:
+	push si
+	push di
+	push ax
+	push es
+	push bx
+	
+	mov ah, [text_attr]
+	
+	cmp al, 0Dh
+	je .newline
+	
+	cmp al, 0Ah
+	je .return
+	
+	cmp al, 08h
+	je .back
+	
+	push ax
+	
+	mov ax, [text_y] ;see if it is time to scroll
+	cmp ax, [text_h]
+	jge .do_scroll
+	
+	mov ax, [text_seg] ;segmentate
+	mov es, ax ;to text location
+	
+	mov ax, [text_w] ;y*w
+	mov bx, [text_y]
+	mul bx ;result now in ax
+	add ax, word [text_x] ;add x to ax
+	shl ax, 1
+	mov bx, ax
+	
 	pop ax
+	
+	mov word [es:bx], ax ;put char with attrib
+	
+	inc word [text_x]
+.end:
+	pop bx
+	pop es
+	pop ax
+	pop di
+	pop si
 	ret
+	
+.do_scroll:
+	;get screen size
+	mov ax, word [text_h] ;w*h = total size of screen
+	mov cx, word [text_w]
+	mul cx ;now ax has result
+	mov cx, ax ;copy result to cx
+	sub cx, word [text_w] ;remove the last line
+	shl cx, 1
+	
+	mov si, word [text_w] ;copy second line first char
+	shl si, 1
+	
+	xor di, di	;to first line first char
+				;and then second char and so on...
+	
+	call _memcpy
+	
+	dec word [text_y] ;decrement y
+	jmp short .return
+.newline:
+	inc word [text_y] ;increment y
+.return:
+	mov word [text_x], 0 ;return to 0
+	jmp short .end
+.back:
+	dec word [text_x]
+	jmp short .end
 
-;@name:			print_string
-;@desc:			prints a string
-;@param:		si: string address
+;@name:			printf
+;@desc:			prints a string (parses stuff)
+;@param:		si: string address, stack: va_list
 ;@return:		n/a
-print_string:
+_printf:
 	push ax
 	push si
-	mov ah, 0Eh
 .loop:
 	lodsb
 	
 	test al, al ;is character zero?
 	jz short .end ;yes, end
-	
-	int 10h
+
+	call _putc
+
 	jmp short .loop
 .end:
 	pop si
 	pop ax
 	ret
 	
-;@name:			get_input
+;@name:			gets
 ;@desc:			scans for whole string
 ;@param:		di: kbuf, bx: max char
 ;@return:		n/a
-get_input:
-	pusha
+_gets:
+	push di
+	push cx
+	push bx
+	push ax
 	xor cx, cx
 .loop:
 	cmp cx, 0
@@ -53,7 +124,7 @@ get_input:
 	cmp al, 08h
 	je short .back
 	
-	call print_char
+	call _putc
 	
 	;now key is in al and ah (only al matters)
 	stosb ;place it in tempbuf
@@ -66,62 +137,62 @@ get_input:
 	dec di
 	
 	mov al, 08h
-	call print_char
+	call _putc
 	mov al, ' '
-	call print_char
+	call _putc
 	mov al, 08h
-	call print_char
+	call _putc
 	
 	dec cx
 	jmp short .loop
 .end:
 	xor al, al
 	stosb ;place a null terminator
-	popa
+	pop ax
+	pop bx
+	pop cx
+	pop di
 	ret
 	
-;@name:			read_file
-;@desc:			reads a file
+;@name:			_fopen
+;@desc:			opens a file
 ;@param:		si: filename, ax: segment/address to load on
 ;@return:		n/a
-read_file:
-	pusha
+_fopen:
+	push ax
+	push bx
+	push cx
+	push si
+	push di
 	
 	mov word [.segment], ax
 	mov word [.filename], si
+	
+	call reset_drive
+	jc .error
 
 	mov ax, 19 ;read from root directory
 	call logical_to_hts ;get parameters for int 13h
 	
 	mov si, buffer ;sectors of the
-	mov ax, ds ;point at our buffer
-	mov es, ax ;for storing readed
 	mov bx, si ;root directory
 	
 	mov al, 14 ;read 14 sectors
 	call read_sector
 	jc .error
 	
-	mov ax, ds
-	mov es, ax
-	mov di, buffer
-	
 	mov cx, word [root_dir_entries]
-	xor ax, ax
+	mov bx, -32
 .find_root_entry:
-	xchg cx, dx
-	
-	mov si, [.filename]
-	mov cx, 11 ;11 characters, the lenght of a FAT12 filename
-	rep cmpsb
-	je short .file_found ;file found!
-	
-	add ax, 32 ;skip one root entry
-	
+	add bx, 32
 	mov di, buffer
-	add di, ax
+	add di, bx
+
+	mov cx, 11
+	mov si, [.filename]
+	rep cmpsb
+	je .file_found
 	
-	xchg dx, cx
 	loop .find_root_entry ;loop...
 	jmp .error ;file not found
 .file_found:
@@ -138,9 +209,7 @@ read_file:
 	call read_sector
 	jc .error
 	
-	mov ax, word [.segment]
-	mov es, ax
-	xor bx, bx
+	mov bx, word [.segment]
 	
 	mov al, 1
 	mov ah, 2
@@ -151,9 +220,7 @@ read_file:
 	add ax, 31
 	call logical_to_hts
 	
-	mov ax, word [.segment]
-	mov es, ax
-	mov bx, word [.pointer]
+	mov bx, word [.segment]
 	
 	pop ax
 	push ax
@@ -179,7 +246,10 @@ read_file:
 	or dx, dx ;is our cluster even or odd?
 	jz short .even_cluster
 .odd_cluster:
-	shr ax, 4
+	push cx
+	mov cl, 4
+	shr ax, cl ;shift 4 bits ax
+	pop cx
 	jmp short .check_eof
 .even_cluster:
 	and ax, 0FFFh
@@ -190,16 +260,25 @@ read_file:
 	
 	push ax
 	mov ax, [bytes_per_sector]
-	add word [.pointer], ax ;bytes
+	add word [.segment], ax ;bytes
 	pop ax
 	jmp short .load_sector
 .end: ;file is now loaded in the ram
 	pop ax ;pop off ax
-	popa
+	
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
 	clc
 	ret
 .error:
-	popa
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
 	stc
 	ret
 
@@ -207,18 +286,86 @@ read_file:
 .segment			dw 0
 .cluster			dw 0
 .pointer			dw 0
+
+;@name:			memcpy
+;@desc:			copies memory SI to DI
+;@param:		si: src, di: dest, cx: len
+;@return:		n/a
+_memcpy:
+	push cx
+	push di
+	push si
+	push ax
+	test cx, cx
+	jz short .end
+.loop:
+	mov al, byte [si]
+	mov byte [di], al
 	
+	loop .loop
+.end:
+	pop ax
+	pop si
+	pop di
+	pop cx
+	ret
+
+;@name:			memcmp
+;@desc:			compares memory SI and DI
+;@param:		si: src, di: dest, cx: len
+;@return:		cf: set if equal
+_memcmp:
+	push cx
+	push di
+	push si
+	push ax
+	test cx, cx
+	jz short .end
+.loop:
+	mov al, byte [si] ;get bytes
+	mov ah, byte [di]
+	
+	cmp al, ah
+	jnz short .not_equ
+	
+	inc di ;increment stuff
+	inc si
+	loop .loop ;once all bytes scaned go to equ
+.equ:
+	stc
+	jmp short .end
+.not_equ:
+	clc
+.end:
+	pop ax
+	pop si
+	pop di
+	pop cx
+	ret
+
 ;@name:			read_sector
 ;@desc:			reads a sector
-;@param:		int 13h params (see logical_to_hts)
+;@param:		L2HTS, al: sect. to read, es:bx palce to put data
 ;@return:		cf: set on error
 read_sector:
 	push ax
 	mov ah, 2
-	pusha
+	
+	push ax
+	push bx
+	push cx
+	push dx
 .loop:
-	popa
-	pusha
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	push ax
+	push bx
+	push cx
+	push dx
+	
 	stc
 	int 13h
 	jnc short .end
@@ -226,12 +373,20 @@ read_sector:
 	jnc short .loop
 	jmp short .error
 .end:
-	popa
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
 	pop ax
 	clc
 	ret
 .error:
-	popa
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
 	pop ax
 	stc
 	ret
@@ -275,22 +430,18 @@ logical_to_hts:
 	mov dl, byte [device_number]
 	ret
 	
-;@name:			string_to_fat12
+;@name:			strfat12
 ;@desc:			converts a string to FAT12 compatible filename
 ;@param:		si: string, di: output string
 ;@return:		n/a
-string_to_fat12:
-	pusha
-
-	;string_to_upper does not affect DI and SI
-	;however, DI contains the uppercased text
-	;and SI is the same
+_strfat12:
 	push di
-	mov di, .tmpbuf ;save stuff in tmpbuf
-	call string_to_upper
-	pop di
-	mov si, .tmpbuf ;SI now has our tempbuf
-	;DI has the original output place for text
+	push si
+	push ax
+	push cx
+	push bx
+
+	call _strup
 
 	;copy file name until a . is found
 	mov cx, 8 ;name is 8 chars lenght (+ dot)
@@ -340,7 +491,12 @@ string_to_fat12:
 .end:
 	xor al, al
 	stosb
-	popa
+	
+	pop bx
+	pop cx
+	pop ax
+	pop si
+	pop di
 	ret
 	
 .implicit_exe_chomp:
@@ -357,11 +513,11 @@ string_to_fat12:
 	stosb
 	loop .pad_name_exe
 .add_exe_ext:
-	mov al, 'E'
+	mov al, 'P'
 	stosb
-	mov al, 'X'
+	mov al, 'R'
 	stosb
-	mov al, 'E'
+	mov al, 'G'
 	stosb
 	jmp short .end
 
@@ -391,45 +547,75 @@ string_to_fat12:
 	
 .tmpbuf		times 32 db 0
 	
-;@name:			string_to_upper
+;@name:			_strup
 ;@desc:			converts a string to all-uppercase
+;@param:		si: string
+;@return:		n/a
+_strup:
+	push si
+	push ax
+.loop:
+	mov al, byte [si]
+	inc si
+	
+	test al, al ;null terminator
+	jz short .end
+
+	cmp al, 'a'
+	jnge short .loop
+	cmp al, 'z' ;is it betwen a-z?
+	jnle short .loop ;yes, do a-z
+	
+	sub al, 32 ;convert lowercase into uppercase
+	
+	jmp short .loop
+.end:
+	pop ax
+	pop si
+	ret
+	
+;@name:			_strcpyup
+;@desc:			converts a string to all-uppercase and copies it into DI
 ;@param:		si: string, di: output string
 ;@return:		n/a
-string_to_upper:
-	pusha
+_strcpyup:
+	push si
+	push di
+	push ax
 .loop:
 	lodsb ;get char from string
 	
 	test al, al ;is it null string
 	jz short .end
 	
-	call to_upper ;convert char to upper
+	call _toupper ;convert char to upper
 	
 	stosb ;place uppered (or not) char in out string
 	
 	jmp short .loop
 .end:
-	popa
+	pop ax
+	pop di
+	pop si
 	ret
 
-;@name:			to_upper
+;@name:			_toupper
 ;@desc:			converts all lowercase into uppercase
 ;@param:		al: char
 ;@return:		al: upper char
-to_upper:
+_toupper:
 	cmp al, 'a'
-	jge short .is_lower
-	jmp short .end
-.is_lower:
+	jnge short .end
 	cmp al, 'z' ;is it betwen a-z?
-	jle short .do_upper ;yes, do a-z
-	jmp short .end ;no, go to end
-.do_upper:
+	jnle short .end ;yes, do a-z
 	sub al, 32 ;convert lowercase into uppercase
 .end:
 	ret
 
-;@name:			
-;@desc:			
-;@param:		
-;@return:		
+text_w		dw 0 ;data
+text_h		dw 0
+text_x		dw 0 ;positions
+text_y		dw 0
+
+text_seg	dw 0 ;segment
+text_attr	db 0 ;current text attribute
