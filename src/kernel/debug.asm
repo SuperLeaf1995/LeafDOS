@@ -3,66 +3,50 @@
 ;@param:		n/a
 ;@return:		n/a
 _dumpregs:
+	push ax
+	
 	push dx
 	push cx
 	push bx
 	push ax
 	push di
 	push si
-	push es
-	push ds
-	
-	mov si, .ds
-	call _printf
-	pop ax ;ds
-	call print_word
-	
-	mov al, ' '
-	call _putc
-	mov si, .es
-	call _printf
-	pop ax ;es
-	call print_word
-	
-	mov si, .nl
-	call _printf
 	
 	mov si, .si
 	call _printf
 	pop ax ;si
 	call print_word
-	
 	mov al, ' '
 	call _putc
+	
 	mov si, .di
 	call _printf
 	pop ax ;di
 	call print_word
-	
-	mov si, .nl
-	call _printf
+	mov al, ' '
+	call _putc
 	
 	mov si, .ax
 	call _printf
 	pop ax ;ax
 	call print_word
-	
 	mov al, ' '
 	call _putc
+	
 	mov si, .bx
 	call _printf
 	pop ax ;bx
 	call print_word
-	
 	mov al, ' '
 	call _putc
+	
 	mov si, .cx
 	call _printf
 	pop ax ;cx
 	call print_word
-	
 	mov al, ' '
 	call _putc
+	
 	mov si, .dx
 	call _printf
 	pop ax ;dx
@@ -70,6 +54,8 @@ _dumpregs:
 	
 	mov si, .nl
 	call _printf
+	
+	pop ax
 	ret
 	
 .ax			db "AX: ",0

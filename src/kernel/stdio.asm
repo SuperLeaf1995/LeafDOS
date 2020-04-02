@@ -22,12 +22,12 @@ _putc:
 	
 	push ax
 	
-	mov ax, [text_y] ;see if it is time to scroll
-	cmp ax, [text_h]
-	jge .do_scroll
-	
 	mov ax, [text_seg] ;segmentate
 	mov es, ax ;to text location
+	
+	mov ax, word [text_y] ;see if it is time to scroll
+	cmp ax, word [text_h]
+	jge .do_scroll
 	
 	mov ax, [text_w] ;y*w
 	mov bx, [text_y]
@@ -50,26 +50,104 @@ _putc:
 	ret
 	
 .do_scroll:
-	;get screen size
-	mov cx, 4000
-	mov si, word [text_w] ;copy second line first char
-	shl si, 1
+	pop ax
 	
-	xor di, di	;to first line first char
-				;and then second char and so on...
+	;decrease y
+	dec word [text_y]
 	
-	call _memcpy
+	;set segments
+	mov ax, [text_seg] ;segmentate
+	mov es, ax ;to text location
 	
-	dec word [text_y] ;decrement y
+	mov cx, word [text_w] ;bytes to copy
+	mov ax, word [text_h] ;(size of screen - 1 scanline)
+	dec ax
+	mul cx
+	mov cx, ax ;transfer to counter register
+	
+	xor di, di ;di starts at line 0
+	
+	mov si, [text_w]
+	shl si, 1 ;shift to left to align with word
+.move_lines:
+	mov ax, word [es:si]
+	mov word [es:di], ax
+	
+	add di, 2
+	add si, 2
+	
+	loop .move_lines
+	
+	mov di, [text_w] ;position of last scanline
+	mov ax, [text_h] 
+	dec ax
+	mul di
+	mov di, ax ;transfer to di
+	shl di, 1 ;align to word by shifting to left
+	
+	mov cx, word [text_w]
+	
+	mov ah, byte [text_attr]
+	mov al, ' '
+.delete_last: ;delete bottomest line of the text memory
+	mov word [es:di], ax
+	
+	add di, 2
+	
+	loop .delete_last
 	jmp short .return
 .newline:
+	push ax
+	mov ax, word [text_y] ;see if it is time to scroll
+	cmp ax, word [text_h]
+	jge .do_scroll
+	pop ax
+	
 	inc word [text_y] ;increment y
 .return:
 	mov word [text_x], 0 ;return to 0
+	
 	jmp short .end
 .back:
 	dec word [text_x]
+	
 	jmp short .end
+	
+;@name:			clrscr
+;@desc:			clears the screen
+;@param:		n/a
+;@return:		n/a
+_clrscr:
+	push ax
+	push bx
+	push cx
+	push es
+	push di
+	
+	mov ax, [text_seg] ;segmentate
+	mov es, ax ;to text location
+	
+	mov bx, [text_w] ;total size of thing
+	mov ax, [text_h]
+	mul bx
+	mov cx, ax ;place in the counter
+	
+	mov ah, [text_attr]
+	mov al, ' '
+	xor di, di
+.loop:
+	mov word [es:di], ax
+	
+	add di, 2 ;skip a full word
+	
+	loop .loop
+	
+	pop di
+	pop es
+	pop cx
+	pop bx
+	pop ax
+	ret
 
 ;@name:			printf
 ;@desc:			prints a string (parses stuff)
@@ -134,6 +212,7 @@ _printf:
 	jmp short .loop
 .end:
 	push bx ;bx had our return address
+	call update_cursor_to_curr ;set the text cursor thing
 	ret ;ret popf off the return address
 	
 ;@name:			gets
@@ -162,7 +241,8 @@ _gets:
 	cmp al, 08h
 	je short .back
 	
-	call _putc
+	call _putc ;display inputted character
+	call update_cursor_to_curr ;update the cursor
 	
 	;now key is in al and ah (only al matters)
 	stosb ;place it in tempbuf
@@ -204,6 +284,9 @@ _memcpy:
 .loop:
 	mov al, byte [si]
 	mov byte [di], al
+	
+	inc di
+	inc si
 	
 	loop .loop
 .end:
@@ -357,6 +440,321 @@ _toupper:
 .end:
 	ret
 	
+;@name:			_fopen
+;@desc:			opens a file
+;@param:		si: filename, ax: segment/address to load on
+;@return:		n/a
+_fopen:
+	push ax
+	push bx
+	push cx
+	push si
+	push di
+	
+	mov word [.segment], ax
+	mov word [.filename], si
+	
+	call reset_drive
+	jc .error
+
+	mov ax, 19 ;read from root directory
+	call logical_to_hts ;get parameters for int 13h
+	
+	mov si, SEG_BUFFER ;sectors of the
+	mov bx, si ;root directory
+	
+	mov al, 14 ;read 14 sectors
+	call read_sector
+	jc .error
+	
+	mov cx, word [root_dir_entries]
+	mov bx, -32
+.find_root_entry:
+	add bx, 32
+	mov di, SEG_BUFFER
+	add di, bx
+	
+	xchg dx, cx
+
+	mov cx, 11 ;compare filename with entry
+	mov si, [.filename]
+	rep cmpsb
+	je short .file_found
+	
+	xchg dx, cx
+	loop .find_root_entry ;loop...
+	jmp .error ;file not found
+.file_found:
+	mov ax, word [es:di+0Fh] ;get cluster
+	mov word [.cluster], ax
+	
+	mov ax, 1
+	call logical_to_hts
+	
+	mov di, SEG_BUFFER
+	mov bx, di
+	
+	mov al, 9 ;read all sectors of the FAT
+	call read_sector
+	jc .error
+	
+	mov bx, word [.segment]
+	
+	mov al, 1
+	mov ah, 2
+	
+	push ax
+.load_sector:
+	mov ax, word [.cluster]
+	add ax, 31
+	call logical_to_hts
+	
+	mov bx, word [.segment]
+	
+	pop ax
+	push ax
+	
+	stc
+	int 13h
+	
+	jnc short .next_cluster
+	call reset_drive
+	jmp short .load_sector
+.next_cluster:
+	mov ax, [.cluster]
+	xor dx, dx
+	mov bx, 3
+	mul bx
+	mov bx, 2
+	div bx
+	
+	mov si, SEG_BUFFER
+	add si, ax
+	
+	mov ax, word [ds:si] ;get cluster word...
+	
+	or dx, dx ;is our cluster even or odd?
+	jz short .even_cluster
+.odd_cluster:
+	push cx
+	mov cl, 4
+	shr ax, cl ;shift 4 bits ax
+	pop cx
+	jmp short .check_eof
+.even_cluster:
+	and ax, 0FFFh
+.check_eof:
+	mov word [.cluster], ax ;put cluster in cluster
+	cmp ax, 0FF8h ;check for eof
+	jae short .end
+	
+	push ax
+	mov ax, [bytes_per_sector]
+	add word [.segment], ax ;bytes
+	pop ax
+	jmp short .load_sector
+.end: ;file is now loaded in the ram
+	pop ax ;pop off ax
+	
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	clc
+	ret
+.error:
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	stc
+	ret
+
+.filename			dw 0
+.segment			dw 0
+.cluster			dw 0
+.pointer			dw 0
+
+;@name:			_flist
+;@desc:			returns entire fat entries
+;@param:		di: output place to put entries
+;@return:		n/a
+_flist:
+	push ax
+	push bx
+	push cx
+	push si
+	push di
+	
+	call reset_drive
+	jc .error
+
+	mov ax, 19 ;read from root directory
+	call logical_to_hts ;get parameters for int 13h
+	
+	mov si, SEG_BUFFER ;sectors of the
+	mov bx, si ;root directory
+	
+	mov al, 14 ;read 14 sectors
+	call read_sector
+	jc .error
+	
+	mov cx, word [root_dir_entries]
+	mov bx, -32
+.find_root_entry:
+	add bx, 32
+	mov di, SEG_BUFFER
+	add di, bx
+	
+	pop si
+	push di
+	xchg di, si
+	mov cx, 32 ;write the entire entry there
+	rep stosb
+	pop di
+	push si
+		
+	loop .find_root_entry ;loop...
+.end:
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	clc
+	ret
+	
+.error:
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	stc
+	ret
+
+.cluster			dw 0
+.pointer			dw 0
+	
+;@name:			strfat12
+;@desc:			converts a string to FAT12 compatible filename
+;@param:		si: string, di: output string
+;@return:		n/a
+_strfat12:
+	push di
+	push si
+	push ax
+	push cx
+	push bx
+
+	call _strup
+
+	;copy file name until a . is found
+	mov cx, 8 ;name is 8 chars lenght (+ dot)
+.copy_name:
+	lodsb
+	
+	test al, al
+	jz short .implicit_exe ;pad the name, and add a EXE extension
+	
+	cmp al, '.'
+	je short .found_dot
+	
+	stosb
+	loop .copy_name
+	
+	;find the . in the filename, chomp last 2 bytes with ~1
+.find_dot_chomp:
+	jmp .search_dot
+	
+	;dot found, pad with whitespaces
+.found_dot:
+	test cx, cx ;do not proced if cx is 0, this causes an
+	jz short .check_extension ;infinite loop!
+	mov al, ' ' ;place whitespaces
+.pad_name:
+	stosb
+	loop .pad_name
+.check_extension:
+	mov cx, 3 ;extension is 3 bytes
+.copy_extension:
+	lodsb
+	
+	test al, al
+	jz short .pad_extension_check
+	
+	stosb
+	loop .copy_extension
+	;loop finished, nothing else to add...
+	jmp short .end
+.pad_extension_check:
+	test cx, cx ;not proced if cx is zero
+	jz short .end
+	mov al, ' '
+.pad_extension:
+	stosb
+	loop .pad_extension
+.end:
+	xor al, al
+	stosb
+	
+	pop bx
+	pop cx
+	pop ax
+	pop si
+	pop di
+	ret
+	
+.implicit_exe_chomp:
+	sub di, 2 ;go back 2 bytes
+	mov al, '~'
+	stosb ;place the ~ thing
+	mov al, '1'
+	stosb ;place the number
+.implicit_exe:
+	test cx, cx ;do not proced if cx is 0, this causes an
+	jz short .add_exe_ext ;infinite loop!
+	mov al, ' ' ;place whitespaces
+.pad_name_exe:
+	stosb
+	loop .pad_name_exe
+.add_exe_ext:
+	mov al, 'P'
+	stosb
+	mov al, 'R'
+	stosb
+	mov al, 'G'
+	stosb
+	jmp short .end
+
+.search_dot:
+	;trash out everything after ~1 and the .
+	;check if next byte (byte 9) is a dot
+	lodsb
+	cmp al, '.'
+	je .found_dot
+.loop_dot:
+	lodsb
+	
+	test al, al
+	jz short .implicit_exe_chomp
+	
+	cmp al, '.'
+	je short .find_dot_and_chomp
+	
+	jmp short .loop_dot
+.find_dot_and_chomp: ;chomp some 2 bytes
+	sub di, 2 ;go back 2 bytes
+	mov al, '~'
+	stosb ;place the ~ thing
+	mov al, '1'
+	stosb ;place the number
+	jmp .found_dot
+	
+.tmpbuf		times 64 db 0
+	
 ;@name:			print_nibble
 ;@desc:			print's al's nibble
 ;@param:		al: char
@@ -399,6 +797,134 @@ print_word:
 	xchg ah, al
 	call print_byte
 	pop ax
+	ret
+
+;@name:			update_cursor_to_curr
+;@desc:			updates curosr position (text-mode) to current char X,Y
+;@param:		n/a
+;@return:		n/a
+update_cursor_to_curr:
+	push ax
+	push bx
+	push cx
+	
+	mov bx, [text_w] ;calculate position...
+	mov ax, [text_y]
+	mul bx
+	mov bx, [text_x]
+	add ax, bx ;now we have position!
+	mov bx, ax ;save ax in bx
+	
+	mov dx, 03D4h ;03D4h
+	mov al, 0Fh
+	out dx, al
+	
+	inc dx ;03D5h
+	mov ax, bx
+	and ax, 0FFh
+	out dx, al
+	
+	dec dx ;03D4h
+	mov al, 0Eh
+	out dx, al
+	
+	inc dx ;03D5h
+	mov ax, bx
+	mov cl, 8 ;shift by right 8 bits
+	shr ax, cl
+	and ax, 0FFh
+	out dx, al
+	
+	pop cx
+	pop bx
+	pop ax
+	ret
+	
+;@name:			read_sector
+;@desc:			reads a sector
+;@param:		L2HTS, al: sect. to read, es:bx palce to put data
+;@return:		cf: set on error
+read_sector:
+	push ax
+	mov ah, 2
+	
+	push ax
+	push bx
+	push cx
+	push dx
+.loop:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	push ax
+	push bx
+	push cx
+	push dx
+	
+	stc
+	int 13h
+	jnc short .end
+	call reset_drive
+	jnc short .loop
+	jmp short .error
+.end:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	pop ax
+	clc
+	ret
+.error:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	pop ax
+	stc
+	ret
+
+;@name:			reset_drive
+;@desc:			resets drive
+;@param:		device_number: current working drive
+;@return:		n/a
+reset_drive:
+	push ax
+	push dx
+	xor ax, ax
+	mov dl, byte [device_number]
+	stc
+	int 13h
+	pop dx
+	pop ax
+	ret
+
+;@name:			logical_to_hts
+;@desc:			converts logical sector to HTS
+;@param:		ax: logical sector
+;@return:		int 13h params
+logical_to_hts:
+	push bx
+	push ax
+	mov bx, ax
+	xor dx, dx
+	div word [sectors_per_track]
+	add dl, 01h
+	mov cl, dl
+	mov ax, bx
+	xor dx, dx
+	div word [sectors_per_track]
+	xor dx, dx
+	div word [sides]
+	mov dh, dl
+	mov ch, al
+	pop ax
+	pop bx
+	mov dl, byte [device_number]
 	ret
 	
 text_w		dw 0 ;data

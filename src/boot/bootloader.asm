@@ -52,7 +52,7 @@ start:
 	;xor eax eax ;for old BIOSes
 	
 	clc
-	int 0x12 ;get some memory stuff...
+	int 12h ;get some memory stuff...
 	jc not_engough_memory
 	
 	cmp ax, 8 ;check if we have 8 kb available

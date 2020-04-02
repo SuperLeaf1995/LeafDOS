@@ -2,30 +2,42 @@ use16
 cpu 8086
 org 0
 
-buffer			equ	24576
+SEG_KERNEL			equ 0500h
+SEG_BUFFER			equ	4000h
+SEG_PROGRAM			equ 8000h
 
 jmp short start
 
-jmp near _fopen		;003
-jmp near _printf	;006
-jmp near _putc		;009
-jmp near _flist		;012
-jmp near _memcpy	;015
-jmp near _memcmp	;018
-jmp near _strfat12	;021
-jmp near _dumpregs	;024
+jmp near _printf	;000
+jmp near _putc		;003
+jmp near _memcpy	;006
+jmp near _memcmp	;009
+jmp near _strcmp	;012
+jmp near _strcpyup	;015
+jmp near _strup		;018
+jmp near _fopen		;021
+jmp near _flist		;024
+jmp near _strfat12	;027
+jmp near _dumpregs	;030
 
 start:
 	xor ax, ax
-	cli
+	cli ;set the stack
 	mov ss, ax
 	mov sp, ax
 	mov sp, 0FFFFh
 	sti
 	cld
-	mov ax, 0500h
-	mov es, ax
-	mov ds, ax
+	mov ax, SEG_KERNEL ;segmentate to
+	mov es, ax ;all data and extended segment into the
+	mov ds, ax ;kernel segment
+	
+	clc ;check if we have engough memory for our
+	int 12h ;programs and buffers
+	jc .not_engough_memory
+	
+	cmp ax, 64
+	jl .not_engough_memory
 	
 	test dl, dl ;get drive information
 	je short .old
@@ -49,10 +61,12 @@ start:
 	mov word [text_h], 25
 	mov word [text_seg], 0xB800
 	mov byte [text_attr], 01Bh
+	
+	call _clrscr
 
-	mov ax, 4
+	mov ax, 0
 	push ax
-	mov ax, 8
+	mov ax, 2
 	push ax
 	mov si, kernel_greet
 	call _printf
@@ -61,6 +75,8 @@ start:
 	call _putc
 	mov al, '>'
 	call _putc
+	
+	call update_cursor_to_curr
 
 	mov bx, 126
 	mov di, kernel_buffer.keyboard
@@ -74,7 +90,7 @@ start:
 	call _strfat12
 	
 	mov si, kernel_buffer.fat12
-	mov ax, 8000h
+	mov ax, SEG_PROGRAM
 	call _fopen
 	jnc short .file_ok
 	jc short .no_file
@@ -84,13 +100,18 @@ start:
 	mov si, kernel_program_start
 	call _printf
 
-	call 8000h
+	call SEG_PROGRAM
 	
 	mov si, kernel_program_end
 	call _printf
 	jmp short .loop
 .no_file:
 	mov si, kernel_no_program
+	call _printf
+	jmp short .loop
+	
+.not_engough_memory:
+	mov si, kernel_memory_error
 	call _printf
 	jmp short .loop
 
@@ -113,11 +134,12 @@ kernel_program_end		db "Program finished",0x0D
 kernel_no_program		db "File not found",0x0D
 						db 0x00
 
+kernel_memory_error		db "LeafDOS requires atleast 64 KB of memory to run",0x0D
+						db 0x00
+
 kernel_buffer:
 	.keyboard			times 128 db 0
 	.fat12				times 128 db 0
 
-%include "fat12.asm"
 %include "debug.asm"
 %include "stdio.asm"
-%include "fs.asm"
