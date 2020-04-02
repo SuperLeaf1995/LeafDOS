@@ -27,7 +27,7 @@ then
 fi
 
 #use dd to paste bootloader into disk
-dd status=noxfer conv=notrunc if=bin/bootloader.boot of=disk/ldos.flp || exit
+dd conv=notrunc if=bin/bootloader.boot of=disk/ldos.flp || exit
 
 rm -rf tmp-loop
 mkdir tmp-loop && mount -o loop -t vfat disk/ldos.flp tmp-loop

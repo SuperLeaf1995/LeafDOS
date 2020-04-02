@@ -69,13 +69,6 @@ start:
 	mov di, kernel_buffer.fat12
 	call _strfat12
 	
-	mov al, 0Dh
-	call _putc
-	mov si, kernel_buffer.fat12
-	call _printf
-	mov al, 0Dh
-	call _putc
-	
 	mov si, kernel_buffer.fat12
 	mov ax, 32768
 	call _fopen

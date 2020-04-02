@@ -51,13 +51,7 @@ _putc:
 	
 .do_scroll:
 	;get screen size
-	mov ax, word [text_h] ;w*h = total size of screen
-	mov cx, word [text_w]
-	mul cx ;now ax has result
-	mov cx, ax ;copy result to cx
-	sub cx, word [text_w] ;remove the last line
-	shl cx, 1
-	
+	mov cx, 4000
 	mov si, word [text_w] ;copy second line first char
 	shl si, 1
 	
@@ -163,8 +157,6 @@ _memcpy:
 	push di
 	push si
 	push ax
-	test cx, cx
-	jz short .end
 .loop:
 	mov al, byte [si]
 	mov byte [di], al
@@ -179,7 +171,7 @@ _memcpy:
 
 ;@name:			memcmp
 ;@desc:			compares memory SI and DI
-;@param:		si: src, di: dest, cx: len
+;@param:		si: str1, di: str2, cx: len
 ;@return:		cf: set if equal
 _memcmp:
 	push cx
@@ -209,6 +201,45 @@ _memcmp:
 	pop di
 	pop cx
 	ret
+	
+;@name:			strcmp
+;@desc:			compares string SI and DI
+;@param:		si: str1, di: str2
+;@return:		cf: set if equal
+_strcmp:
+	push cx
+	push di
+	push si
+	push ax
+	test cx, cx
+	jz short .end
+.loop:
+	mov al, byte [si] ;get bytes
+	mov ah, byte [di]
+	
+	cmp al, ah
+	jnz short .not_equ
+	
+	test al, al
+	jz short .check_if_null
+	
+	inc di ;increment stuff
+	inc si
+	loop .loop ;once all bytes scaned go to equ
+.check_if_null:
+	test ah, ah
+	jnz short .not_equ
+.equ:
+	stc
+	jmp short .end
+.not_equ:
+	clc
+.end:
+	pop ax
+	pop si
+	pop di
+	pop cx
+	ret
 
 ;@name:			_strup
 ;@desc:			converts a string to all-uppercase
@@ -219,19 +250,19 @@ _strup:
 	push ax
 .loop:
 	mov al, byte [si]
+	inc si
 	
 	test al, al ;null terminator
 	jz short .end
 
-	cmp al, 'a'
+	cmp al, 'a';is it betwen a-z?
 	jnge short .loop
-	cmp al, 'z' ;is it betwen a-z?
-	jnle short .loop ;yes, do a-z
+	cmp al, 'z'
+	jnle short .loop
 	
 	sub al, 32 ;convert lowercase into uppercase
 	
-	mov byte [si], al
-	inc si
+	mov byte [si-1], al
 	
 	jmp short .loop
 .end:
