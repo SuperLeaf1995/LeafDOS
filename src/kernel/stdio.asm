@@ -76,21 +76,65 @@ _putc:
 ;@param:		si: string address, stack: va_list
 ;@return:		n/a
 _printf:
-	push ax
-	push si
+	pop bx ;assign bx the return address
 .loop:
 	lodsb
 	
 	test al, al ;is character zero?
 	jz short .end ;yes, end
+	
+	cmp al, '%' ;lets check for format...
+	je short .check_format
 
 	call _putc
 
 	jmp short .loop
-.end:
+.check_format:
+	lodsb ;get next char
+
+	test al, al ;if it is null inmediately end
+	jz short .end
+
+	cmp al, 'c' ;char
+	je short .format_char
+	
+	cmp al, 's' ;string set
+	je short .format_string
+	
+	cmp al, 'x' ;unsigned int (hex)
+	je short .format_unsigned_int_hex
+	
+	jmp short .loop
+	
+;print a char if %c present
+.format_char:
+	pop ax ;pop char from the va_list (char is a word)
+	call _putc
+	jmp short .loop
+	
+;print an string if %s is present
+.format_string:
 	pop si
-	pop ax
-	ret
+.string_loop:
+	lodsb
+	
+	test al, al
+	jz short .end_string_loop ;if char is not null continue
+
+	call _putc ;put string's char
+
+	jmp short .string_loop
+.end_string_loop:
+	jmp short .loop ;return back to main loop
+	
+;print an unsigned int in hexadecimal if %x is present
+.format_unsigned_int_hex:
+	pop ax ;get int
+	call print_word ;print word
+	jmp short .loop
+.end:
+	push bx ;bx had our return address
+	ret ;ret popf off the return address
 	
 ;@name:			gets
 ;@desc:			scans for whole string

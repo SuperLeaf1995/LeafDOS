@@ -50,6 +50,10 @@ start:
 	mov word [text_seg], 0xB800
 	mov byte [text_attr], 01Bh
 
+	mov ax, 4
+	push ax
+	mov ax, 8
+	push ax
 	mov si, kernel_greet
 	call _printf
 .loop:
@@ -70,7 +74,7 @@ start:
 	call _strfat12
 	
 	mov si, kernel_buffer.fat12
-	mov ax, 32768
+	mov ax, 8000h
 	call _fopen
 	jnc short .file_ok
 	jc short .no_file
@@ -80,7 +84,7 @@ start:
 	mov si, kernel_program_start
 	call _printf
 
-	call 32768
+	call 8000h
 	
 	mov si, kernel_program_end
 	call _printf
@@ -96,7 +100,7 @@ sectors_per_track		dw 18
 sides					dw 2
 device_number			db 0
 
-kernel_greet			db "LeafDOS v0.1",0x0D
+kernel_greet			db "LeafDOS v%x.%x",0x0D
 						db "Kernel hot-date: ",__DATE__,0x0D
 						db 0x00
 						
