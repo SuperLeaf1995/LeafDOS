@@ -52,11 +52,10 @@ _putc:
 .do_scroll:
 	pop ax
 	
-	;decrease y
+	dec word [text_y] ;decrease y
 	dec word [text_y]
 	
-	;set segments
-	mov ax, [text_seg] ;segmentate
+	mov ax, [text_seg] ;set segments
 	mov es, ax ;to text location
 	
 	mov cx, word [text_w] ;bytes to copy
@@ -89,13 +88,12 @@ _putc:
 	
 	mov ah, byte [text_attr]
 	mov al, ' '
-.delete_last: ;delete bottomest line of the text memory
+.clear_last: ;clear bottomest line of the text memory
 	mov word [es:di], ax
 	
 	add di, 2
 	
-	loop .delete_last
-	jmp short .return
+	loop .clear_last
 .newline:
 	push ax
 	mov ax, word [text_y] ;see if it is time to scroll
@@ -270,6 +268,21 @@ _gets:
 	pop bx
 	pop cx
 	pop di
+	ret
+	
+_kbhit:
+	xor ax, ax ;is key pressed?
+	inc ah
+	int 16h
+	
+	jz .no_key
+	
+	xor ax, ax ;get the key if pressed
+	int 16h
+	
+	ret ;ax now has the key
+.no_key:
+	xor ax, ax
 	ret
 
 ;@name:			memcpy
@@ -864,10 +877,14 @@ read_sector:
 	push dx
 	
 	stc
+	
 	int 13h
+	
 	jnc short .end
+	
 	call reset_drive
 	jnc short .loop
+	
 	jmp short .error
 .end:
 	pop dx

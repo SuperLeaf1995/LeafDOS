@@ -8,17 +8,18 @@ SEG_PROGRAM			equ 8000h
 
 jmp short start
 
-jmp near _printf	;000
-jmp near _putc		;003
-jmp near _memcpy	;006
-jmp near _memcmp	;009
-jmp near _strcmp	;012
-jmp near _strcpyup	;015
-jmp near _strup		;018
-jmp near _fopen		;021
-jmp near _flist		;024
-jmp near _strfat12	;027
-jmp near _dumpregs	;030
+jmp near _printf		;000
+jmp near _putc			;003
+jmp near _memcpy		;006
+jmp near _memcmp		;009
+jmp near _strcmp		;012
+jmp near _strcpyup		;015
+jmp near _strup			;018
+jmp near _fopen			;021
+jmp near _flist			;024
+jmp near _strfat12		;027
+jmp near _dumpregs		;030
+jmp near _dissasembly	;033
 
 start:
 	xor ax, ax
@@ -62,57 +63,57 @@ start:
 	mov word [text_seg], 0xB800
 	mov byte [text_attr], 01Bh
 	
-	call _clrscr
+	call near _clrscr
 
 	mov ax, 0
 	push ax
 	mov ax, 2
 	push ax
 	mov si, kernel_greet
-	call _printf
+	call near _printf
 .loop:
 	mov al, 0Dh
-	call _putc
+	call near _putc
 	mov al, '>'
-	call _putc
+	call near _putc
 	
-	call update_cursor_to_curr
+	call near update_cursor_to_curr
 
 	mov bx, 126
 	mov di, kernel_buffer.keyboard
-	call _gets
+	call near _gets
 	
 	mov al, 0Dh
-	call _putc
+	call near _putc
 	
 	mov si, kernel_buffer.keyboard
 	mov di, kernel_buffer.fat12
-	call _strfat12
+	call near _strfat12
 	
 	mov si, kernel_buffer.fat12
 	mov ax, SEG_PROGRAM
-	call _fopen
+	call near _fopen
 	jnc short .file_ok
 	jc short .no_file
 	
 	jmp short .loop
 .file_ok:
 	mov si, kernel_program_start
-	call _printf
+	call near _printf
 
 	call SEG_PROGRAM
 	
 	mov si, kernel_program_end
-	call _printf
+	call near _printf
 	jmp short .loop
 .no_file:
 	mov si, kernel_no_program
-	call _printf
+	call near _printf
 	jmp short .loop
 	
 .not_engough_memory:
 	mov si, kernel_memory_error
-	call _printf
+	call near _printf
 	jmp short .loop
 
 root_dir_entries		dw 224
