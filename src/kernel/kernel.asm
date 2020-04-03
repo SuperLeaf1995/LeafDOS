@@ -2,9 +2,9 @@ use16
 cpu 8086
 org 0
 
-SEG_KERNEL			equ 0500h
-SEG_BUFFER			equ	4000h
-SEG_PROGRAM			equ 8000h
+SEG_KERNEL				equ 0500h
+SEG_BUFFER				equ	4000h
+SEG_PROGRAM				equ 8000h
 
 jmp short start
 
@@ -14,12 +14,14 @@ jmp near _memcpy		;006
 jmp near _memcmp		;009
 jmp near _strcmp		;012
 jmp near _strcpyup		;015
-jmp near _strup			;018
+jmp	near _strup			;018
 jmp near _fopen			;021
 jmp near _flist			;024
 jmp near _strfat12		;027
 jmp near _dumpregs		;030
 jmp near _dissasembly	;033
+jmp near _scroll		;036
+jmp near _itoa			;039
 
 start:
 	xor ax, ax
@@ -65,9 +67,9 @@ start:
 	
 	call near _clrscr
 
-	mov ax, 0
+	mov ax, 1
 	push ax
-	mov ax, 2
+	mov ax, 0
 	push ax
 	mov si, kernel_greet
 	call near _printf
@@ -122,7 +124,7 @@ sectors_per_track		dw 18
 sides					dw 2
 device_number			db 0
 
-kernel_greet			db "LeafDOS v%x.%x",0x0D
+kernel_greet			db "LeafDOS v%i.%i",0x0D
 						db "Kernel hot-date: ",__DATE__,0x0D
 						db 0x00
 						

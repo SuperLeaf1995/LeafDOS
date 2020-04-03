@@ -48,9 +48,38 @@ _putc:
 	pop di
 	pop si
 	ret
-	
 .do_scroll:
 	pop ax
+	
+	call _scroll
+	
+	mov ax, [text_h]
+	dec ax
+	mov word [text_y], ax
+	
+	jmp short .end
+
+.newline:
+	push ax
+	mov ax, word [text_y] ;see if it is time to scroll
+	cmp ax, word [text_h]
+	jge .do_scroll
+	pop ax
+
+	inc word [text_y] ;increment y
+.return:
+	mov word [text_x], 0 ;return to 0
+	jmp short .end
+.back:
+	dec word [text_x] ;decrement char
+	jmp short .end
+	
+;@name:			scroll
+;@desc:			scrolls the screen down
+;@param:		n/a
+;@return:		n/a
+_scroll:
+	push ax
 	
 	dec word [text_y] ;decrease y
 	dec word [text_y]
@@ -78,7 +107,7 @@ _putc:
 	loop .move_lines
 	
 	mov di, [text_w] ;position of last scanline
-	mov ax, [text_h] 
+	mov ax, [text_h]
 	dec ax
 	mul di
 	mov di, ax ;transfer to di
@@ -94,22 +123,9 @@ _putc:
 	add di, 2
 	
 	loop .clear_last
-.newline:
-	push ax
-	mov ax, word [text_y] ;see if it is time to scroll
-	cmp ax, word [text_h]
-	jge .do_scroll
+	
 	pop ax
-	
-	inc word [text_y] ;increment y
-.return:
-	mov word [text_x], 0 ;return to 0
-	
-	jmp short .end
-.back:
-	dec word [text_x]
-	
-	jmp short .end
+	ret
 	
 ;@name:			clrscr
 ;@desc:			clears the screen
@@ -180,6 +196,9 @@ _printf:
 	cmp al, 'x' ;unsigned int (hex)
 	je short .format_unsigned_int_hex
 	
+	cmp al, 'i' ;signed int
+	je short .format_signed_int
+		
 	jmp short .loop
 	
 ;print a char if %c present
@@ -208,11 +227,62 @@ _printf:
 	pop ax ;get int
 	call print_word ;print word
 	jmp short .loop
+	
+;print an signed int if %i is present
+.format_signed_int:
+	pop ax ;get the int
+	
+	push si ;save this important stuff
+	
+	mov di, .tmpbuf
+	call _itoa ;call itoa and save thing in temp buffer
+	
+	;print tempbuffer
+	mov si, .tmpbuf
+.print_int_loop:
+	lodsb
+	
+	test al, al
+	jz short .end_print_int_loop
+	
+	call _putc ;put int chars
+	
+	jmp short .print_int_loop
+.end_print_int_loop:
+
+	pop si ;restore important stuff
+	
+	jmp short .loop
+	
 .end:
+	call update_cursor_to_curr ;set the text cursor thing to EOS
+
 	push bx ;bx had our return address
-	call update_cursor_to_curr ;set the text cursor thing
 	ret ;ret popf off the return address
 	
+.tmpbuf		times 8 db 0 ;max of 8 chars
+
+;@name:			strlen
+;@desc:			gets lenght of string
+;@param:		si: string
+;@return:		cx: lenght of string
+_strlen:
+	push si
+	
+	xor cx, cx
+.loop:
+	inc cx ;increment cx as time passes by
+	
+	lodsb ;get thing, is this zero?
+	
+	or al, al ;super quick way to test zero
+	jnz short .loop
+	
+	dec cx ;decrement by one (NULL CHAR does not count)
+	
+	pop si
+	ret
+
 ;@name:			gets
 ;@desc:			scans for whole string
 ;@param:		di: kbuf, bx: max char
@@ -944,10 +1014,59 @@ logical_to_hts:
 	mov dl, byte [device_number]
 	ret
 	
-text_w		dw 0 ;data
-text_h		dw 0
-text_x		dw 0 ;positions
-text_y		dw 0
+;@name:			itoa
+;@desc:			integer to string
+;@param:		ax: number, di to put string on
+;@return:		n/a
+_itoa:
+	push ax
+	push si
+	push dx
+	
+	xor cx, cx ;avoid popping out more stuff
+	
+	cmp ax, 0 ;is our number negative?
+	ja short .loop
+	jz short .zero ;also go to zero loop if its zero, since 0 divs cannot be done!
+	
+	mov byte [di], '-' ;place a minus sign
+	inc di
+.loop:
+	xor dx, dx
+	
+	mov si, 10
+	idiv si ;signed divide
+	
+	add dl, '0'
+	
+	push dx ;push the number character in reverse order
+	inc cx	
+	
+	test ax, ax ;is ax zero?
+	jnz short .loop
+.pop_loop:
+	pop dx ;pop the pushed chars, in reverse order
+	
+	mov byte [di], dl ;place char in string
+	inc di ;next byte
+	
+	loop .pop_loop ;cx had the counts of pushed chars
+.end:
+	mov byte [di], 0 ;add null terminator
+	
+	pop dx
+	pop si
+	pop ax
+	ret
+.zero:
+	mov byte [di], '0'
+	inc di
+	jmp short .end
 
-text_seg	dw 0 ;segment
-text_attr	db 0 ;current text attribute
+text_w			dw 0 ;data
+text_h			dw 0
+text_x			dw 0 ;positions
+text_y			dw 0
+
+text_seg		dw 0 ;segment
+text_attr		db 0 ;current text attribute
