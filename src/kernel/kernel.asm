@@ -2,26 +2,10 @@ use16
 cpu 8086
 org 0
 
-SEG_KERNEL				equ 0500h
-SEG_BUFFER				equ	4000h
-SEG_PROGRAM				equ 8000h
-
-jmp short start
-
-jmp near _printf		;000
-jmp near _putc			;003
-jmp near _memcpy		;006
-jmp near _memcmp		;009
-jmp near _strcmp		;012
-jmp near _strcpyup		;015
-jmp	near _strup			;018
-jmp near _fopen			;021
-jmp near _flist			;024
-jmp near _strfat12		;027
-jmp near _dumpregs		;030
-jmp near _dissasembly	;033
-jmp near _scroll		;036
-jmp near _itoa			;039
+SEG_KERNEL				equ 0500h ;First free block of mem
+SEG_BUFFER				equ	0900h
+SEG_AUTORN				equ 1200h
+SEG_ARUN				equ 1200h ;overwrite AUTORN, its not needed once a ALOAD is done
 
 start:
 	xor ax, ax
@@ -37,10 +21,10 @@ start:
 	
 	clc ;check if we have engough memory for our
 	int 12h ;programs and buffers
-	jc .not_engough_memory
+	jc .error
 	
-	cmp ax, 64
-	jl .not_engough_memory
+	cmp ax, 64 ;check for 64 kb
+	jl .error
 	
 	test dl, dl ;get drive information
 	je short .old
@@ -57,92 +41,351 @@ start:
 	mov [sides], dx
 .old:
 	;xor eax eax ;for old BIOSes
-	
-	mov word [text_x], 0
-	mov word [text_y], 0
-	mov word [text_w], 80
-	mov word [text_h], 25
-	mov word [text_seg], 0xB800
-	mov byte [text_attr], 01Bh
-	
-	call near _clrscr
 
-	mov ax, 1
+	mov si, moduler_ok
+	call printf
+	
+	mov ax, SEG_AUTORN ;autorun loads at 4000h
+	mov si, autorun_file
+	call fopen
+	jc .end
+	
+	mov si, SEG_AUTORN ;now read autorun.lss
+	call printf
+.read_loop:
+	cmp al, byte [si]
+	jz .end
+	
+	mov cx, 4
+	mov di, .arun_str
+	call strncmp
+	jc .arun
+	
+	inc si
+
+	jmp short .read_loop
+.arun: ;ARUN - Run program
+	add si, 4 ;skip ARUN
+.rem_white:
+	inc si
+	lodsb
+	cmp al, ' '
+	je short .rem_white
+	dec si
+	
+	mov ax, SEG_ARUN ;normal place to load stuff on
+	call printf
+	
+	call fopen
+	jc .arun_error
+	
+	call SEG_ARUN
+	
+	ret ;after (arun SOMENAMEPRG) end
+.arun_error:
+	mov si, .arun_err
+	call printf
+	jmp $
+	
+;general LSS parser errors
+.end:
+	mov si, .end_err
+	call printf
+	jmp $
+.error:
+	mov si, .erro
+	call printf
+	jmp $
+
+.arun_err		db "ARUN ERR",0Dh,0Ah,0
+.arun_str		db "ARUN",0
+
+.end_err		db "AUTORUN.LSS MUST HAVE ARUN",0Dh,0Ah,0
+.erro			db "I/O ERROR",0Dh,0Ah,0
+		
+autorun_file	db "AUTORUN LSS"
+moduler_ok		db "Moduler: OK",0Dh,0Ah,0
+
+strncmp:
+	push cx
+	push di
+	push si
 	push ax
-	mov ax, 0
-	push ax
-	mov si, kernel_greet
-	call near _printf
+	test cx, cx
+	jz short .end
 .loop:
-	mov al, 0Dh
-	call near _putc
-	mov al, '>'
-	call near _putc
+	mov al, byte [si] ;get bytes
+	mov ah, byte [di]
 	
-	call near update_cursor_to_curr
+	cmp al, ah
+	jnz short .not_equ
+	
+	test al, al
+	jz short .check_if_null
+	
+	inc di ;increment stuff
+	inc si
+	loop .loop ;once all bytes scaned go to equ
+	jmp short .equ
+.check_if_null:
+	test ah, ah
+	jnz short .not_equ
+.equ:
+	stc
+	jmp short .end
+.not_equ:
+	clc
+.end:
+	pop ax
+	pop si
+	pop di
+	pop cx
+	ret
 
-	mov bx, 126
-	mov di, kernel_buffer.keyboard
-	call near _gets
+printf:
+	push si
+	push ax
+	mov ah, 0Eh
+.loop:
+	lodsb
 	
-	mov al, 0Dh
-	call near _putc
-	
-	mov si, kernel_buffer.keyboard
-	mov di, kernel_buffer.fat12
-	call near _strfat12
-	
-	mov si, kernel_buffer.fat12
-	mov ax, SEG_PROGRAM
-	call near _fopen
-	jnc short .file_ok
-	jc short .no_file
-	
-	jmp short .loop
-.file_ok:
-	mov si, kernel_program_start
-	call near _printf
+	test al, al ;is character zero?
+	jz short .end ;yes, end
 
-	call SEG_PROGRAM
+	int 10h
+
+	jmp short .loop
+.end:
+	pop ax
+	pop si
+	ret ;ret popf off the return address
+
+fopen:
+	push ax
+	push bx
+	push cx
+	push si
+	push di
 	
-	mov si, kernel_program_end
-	call near _printf
-	jmp short .loop
-.no_file:
-	mov si, kernel_no_program
-	call near _printf
-	jmp short .loop
+	mov word [.segment], ax
+	mov word [.filename], si
 	
-.not_engough_memory:
-	mov si, kernel_memory_error
-	call near _printf
-	jmp short .loop
+	call reset_drive
+	jc .error
+
+	mov ax, 19 ;read from root directory
+	call logical_to_hts ;get parameters for int 13h
+	
+	mov si, SEG_BUFFER ;sectors of the
+	mov bx, si ;root directory
+	
+	mov al, 14 ;read 14 sectors
+	call read_sector
+	jc .error
+	
+	mov cx, word [root_dir_entries]
+	mov bx, -32
+.find_root_entry:
+	add bx, 32
+	mov di, SEG_BUFFER
+	add di, bx
+	
+	xchg dx, cx
+
+	mov cx, 11 ;compare filename with entry
+	mov si, [.filename]
+	rep cmpsb
+	je short .file_found
+	
+	xchg dx, cx
+	loop .find_root_entry ;loop...
+	jmp .error ;file not found
+.file_found:
+	mov ax, word [es:di+0Fh] ;get cluster
+	mov word [.cluster], ax
+	
+	mov ax, 1
+	call logical_to_hts
+	
+	mov di, SEG_BUFFER
+	mov bx, di
+	
+	mov al, 9 ;read all sectors of the FAT
+	call read_sector
+	jc .error
+	
+	mov bx, word [.segment]
+	
+	mov al, 1
+	mov ah, 2
+	
+	push ax
+.load_sector:
+	mov ax, word [.cluster]
+	add ax, 31
+	call logical_to_hts
+	
+	mov bx, word [.segment]
+	
+	pop ax
+	push ax
+	
+	stc
+	int 13h
+	
+	jnc short .next_cluster
+	call reset_drive
+	jmp short .load_sector
+.next_cluster:
+	mov ax, [.cluster]
+	xor dx, dx
+	mov bx, 3
+	mul bx
+	mov bx, 2
+	div bx
+	
+	mov si, SEG_BUFFER
+	add si, ax
+	
+	mov ax, word [ds:si] ;get cluster word...
+	
+	or dx, dx ;is our cluster even or odd?
+	jz short .even_cluster
+.odd_cluster:
+	push cx
+	mov cl, 4
+	shr ax, cl ;shift 4 bits ax
+	pop cx
+	jmp short .check_eof
+.even_cluster:
+	and ax, 0FFFh
+.check_eof:
+	mov word [.cluster], ax ;put cluster in cluster
+	cmp ax, 0FF8h ;check for eof
+	jae short .end
+	
+	push ax
+	mov ax, [bytes_per_sector]
+	add word [.segment], ax ;bytes
+	pop ax
+	jmp short .load_sector
+.end: ;file is now loaded in the ram
+	pop ax ;pop off ax
+	
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	clc
+	ret
+.error:
+	pop di
+	pop si
+	pop cx
+	pop bx
+	pop ax
+	stc
+	ret
+
+.filename			dw 0
+.segment			dw 0
+.cluster			dw 0
+.pointer			dw 0
+	
+;@name:			read_sector
+;@desc:			reads a sector
+;@param:		L2HTS, al: sect. to read, es:bx palce to put data
+;@return:		cf: set on error
+read_sector:
+	push ax
+	mov ah, 2
+	
+	push ax
+	push bx
+	push cx
+	push dx
+.loop:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	push ax
+	push bx
+	push cx
+	push dx
+	
+	stc
+	
+	int 13h
+	
+	jnc short .end
+	
+	call reset_drive
+	jnc short .loop
+	
+	jmp short .error
+.end:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	pop ax
+	clc
+	ret
+.error:
+	pop dx
+	pop cx
+	pop bx
+	pop ax
+	
+	pop ax
+	stc
+	ret
+
+;@name:			reset_drive
+;@desc:			resets drive
+;@param:		device_number: current working drive
+;@return:		n/a
+reset_drive:
+	push ax
+	push dx
+	xor ax, ax
+	mov dl, byte [device_number]
+	stc
+	int 13h
+	pop dx
+	pop ax
+	ret
+
+;@name:			logical_to_hts
+;@desc:			converts logical sector to HTS
+;@param:		ax: logical sector
+;@return:		int 13h params
+logical_to_hts:
+	push bx
+	push ax
+	mov bx, ax
+	xor dx, dx
+	div word [sectors_per_track]
+	add dl, 01h
+	mov cl, dl
+	mov ax, bx
+	xor dx, dx
+	div word [sectors_per_track]
+	xor dx, dx
+	div word [sides]
+	mov dh, dl
+	mov ch, al
+	pop ax
+	pop bx
+	mov dl, byte [device_number]
+	ret
 
 root_dir_entries		dw 224
 bytes_per_sector		dw 512
 sectors_per_track		dw 18
 sides					dw 2
 device_number			db 0
-
-kernel_greet			db "LeafDOS v%i.%i",0x0D
-						db "Kernel hot-date: ",__DATE__,0x0D
-						db 0x00
-						
-kernel_program_start	db "Starting program",0x0D
-						db 0x00
-
-kernel_program_end		db "Program finished",0x0D
-						db 0x00
-						
-kernel_no_program		db "File not found",0x0D
-						db 0x00
-
-kernel_memory_error		db "LeafDOS requires atleast 64 KB of memory to run",0x0D
-						db 0x00
-
-kernel_buffer:
-	.keyboard			times 128 db 0
-	.fat12				times 128 db 0
-
-%include "debug.asm"
-%include "stdio.asm"
