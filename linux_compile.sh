@@ -27,6 +27,12 @@ do
 	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.lib || exit
 done
 
+for i in src/programs/*.lss
+do
+	echo "COPYING :: $i"
+	cp $i bin || exit
+done
+
 if [ ! -e disk/ldos.flp ]
 then
 	mkdosfs -C disk/ldos.flp 1440 || exit
@@ -41,11 +47,6 @@ mkdir tmp-loop && mount -o loop -t vfat disk/ldos.flp tmp-loop
 #do not put bootloader in floppy image (double boot??? what?)
 rm -f bin/bootloader.boot
 for i in bin/*
-do
-	echo "COPYING :: $i"
-	cp $i tmp-loop || exit
-done
-for i in src/programs/*.lss
 do
 	echo "COPYING :: $i"
 	cp $i tmp-loop || exit

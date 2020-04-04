@@ -3,9 +3,11 @@ cpu 8086
 org 0
 
 SEG_KERNEL				equ 0500h ;First free block of mem
-SEG_BUFFER				equ	0900h
-SEG_AUTORN				equ 1200h
-SEG_ARUN				equ 1200h ;overwrite AUTORN, its not needed once a ALOAD is done
+SEG_BUFFER				equ	0800h
+SEG_AUTORN				equ 0A00h
+SEG_ARUN				equ 0B00h ;overwrite AUTORN, its not needed once a ALOAD is done
+
+[section .text]
 
 start:
 	xor ax, ax
@@ -41,144 +43,38 @@ start:
 	mov [sides], dx
 .old:
 	;xor eax eax ;for old BIOSes
-
-	mov si, moduler_ok
-	call printf
 	
-	mov ax, SEG_AUTORN ;autorun loads at 4000h
-	mov si, autorun_file
+	mov ax, SEG_AUTORN
+	mov si, .autorun_file
 	call fopen
-	jc .end
-	
-	mov si, SEG_AUTORN ;now read autorun.lss
-	call printf
-.read_loop:
-	cmp al, byte [si]
-	jz .end
-	
-	mov cx, 4
-	mov di, .arun_str
-	call strncmp
-	jc .arun
-	
-	inc si
+	jc short .error
 
-	jmp short .read_loop
-.arun: ;ARUN - Run program
-	add si, 4 ;skip ARUN
-.rem_white:
-	inc si
-	lodsb
-	cmp al, ' '
-	je short .rem_white
-	dec si
+	call SEG_AUTORN
 	
-	mov ax, SEG_ARUN ;normal place to load stuff on
-	call printf
-	
-	call fopen
-	jc .arun_error
-	
-	call SEG_ARUN
-	
-	ret ;after (arun SOMENAMEPRG) end
-.arun_error:
-	mov si, .arun_err
-	call printf
-	jmp $
-	
-;general LSS parser errors
-.end:
-	mov si, .end_err
-	call printf
-	jmp $
 .error:
-	mov si, .erro
-	call printf
 	jmp $
 
-.arun_err		db "ARUN ERR",0Dh,0Ah,0
-.arun_str		db "ARUN",0
+.autorun_file	db "COMMAND PRG"
 
-.end_err		db "AUTORUN.LSS MUST HAVE ARUN",0Dh,0Ah,0
-.erro			db "I/O ERROR",0Dh,0Ah,0
-		
-autorun_file	db "AUTORUN LSS"
-moduler_ok		db "Moduler: OK",0Dh,0Ah,0
-
-strncmp:
-	push cx
-	push di
-	push si
-	push ax
-	test cx, cx
-	jz short .end
-.loop:
-	mov al, byte [si] ;get bytes
-	mov ah, byte [di]
-	
-	cmp al, ah
-	jnz short .not_equ
-	
-	test al, al
-	jz short .check_if_null
-	
-	inc di ;increment stuff
-	inc si
-	loop .loop ;once all bytes scaned go to equ
-	jmp short .equ
-.check_if_null:
-	test ah, ah
-	jnz short .not_equ
-.equ:
-	stc
-	jmp short .end
-.not_equ:
-	clc
-.end:
-	pop ax
-	pop si
-	pop di
-	pop cx
-	ret
-
-printf:
-	push si
-	push ax
-	mov ah, 0Eh
-.loop:
-	lodsb
-	
-	test al, al ;is character zero?
-	jz short .end ;yes, end
-
-	int 10h
-
-	jmp short .loop
-.end:
-	pop ax
-	pop si
-	ret ;ret popf off the return address
-
+;@name:			fopen
+;@desc:			opens a file
+;@param:		si: filename, ax: segment/address to load on
+;@return:		n/a
 fopen:
-	push ax
-	push bx
-	push cx
-	push si
-	push di
-	
 	mov word [.segment], ax
 	mov word [.filename], si
 	
 	call reset_drive
 	jc .error
+	
+	;call printf
 
 	mov ax, 19 ;read from root directory
 	call logical_to_hts ;get parameters for int 13h
 	
 	mov si, SEG_BUFFER ;sectors of the
 	mov bx, si ;root directory
-	
+
 	mov al, 14 ;read 14 sectors
 	call read_sector
 	jc .error
@@ -271,20 +167,9 @@ fopen:
 	jmp short .load_sector
 .end: ;file is now loaded in the ram
 	pop ax ;pop off ax
-	
-	pop di
-	pop si
-	pop cx
-	pop bx
-	pop ax
 	clc
 	ret
 .error:
-	pop di
-	pop si
-	pop cx
-	pop bx
-	pop ax
 	stc
 	ret
 
@@ -304,9 +189,7 @@ read_sector:
 	push ax
 	push bx
 	push cx
-	push dx
 .loop:
-	pop dx
 	pop cx
 	pop bx
 	pop ax
@@ -314,7 +197,6 @@ read_sector:
 	push ax
 	push bx
 	push cx
-	push dx
 	
 	stc
 	
@@ -327,7 +209,6 @@ read_sector:
 	
 	jmp short .error
 .end:
-	pop dx
 	pop cx
 	pop bx
 	pop ax
@@ -336,7 +217,6 @@ read_sector:
 	clc
 	ret
 .error:
-	pop dx
 	pop cx
 	pop bx
 	pop ax

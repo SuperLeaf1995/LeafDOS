@@ -1,20 +1,11 @@
 use16
 cpu 8086
-org 19020
+org 4F00h
 
-%include "src/common/ssla.inc"
+[section .text]
 
 start:
 	mov ah, 0Eh
-.re:
-	mov al, 20h
-	xor cx, cx
-.loss:
+	mov al, 'a'
 	int 10h
-	
-	cmp al, 255
-	je short .re
-	
-	inc al
-	
-	jmp short .loss
+	jmp $
