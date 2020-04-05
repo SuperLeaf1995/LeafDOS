@@ -2,10 +2,13 @@ use16
 cpu 8086
 org 0
 
-jmp short start
+jmp short start ; Jump after the MBR
 nop
 
-;640 KB Disk Specs
+; Floppy Disk MBR table for FAT12
+; This are the defaults for a 1.44 MB floppy diskette
+; The media descriptor (0F0h) indicates that this is a
+; floppy
 oem_label				db "Leaf DOS"
 bytes_per_sector		dw 512
 sectors_per_cluster		db 1
@@ -28,89 +31,71 @@ file_system				db "FAT12   "
 start:
 	mov ax, 07C0h
 	add ax, 544
-	cli ;set stack segment
+	cli ; Set the stack segment
 	mov ss, ax
-	mov sp, 4096
+	mov sp, 4096 ; Set the stack pointer 4096 bytes away from the bootloader
 	sti
-	mov ax, 07C0h
-	mov ds, ax
-	
-	test dl, dl ;get drive information
-	je short .old
-	mov [device_number], dl ;set dl to device
-	mov ah, 8 ;issue interrupt
-	int 13h
-	jc info_error ;if error reboot
-	and cx, 3Fh ;mask out bits of cx
-	mov [sectors_per_track], cx
-	;movzx dx, dh ;sides are dh+1
-	mov dl, dh ;sides are dh+1
-	xor dh, dh
-	inc dx
-	mov [sides], dx
-.old:
-	;xor eax eax ;for old BIOSes
+	mov ax, 07C0h ; Set our data segment
+	mov ds, ax ; so we can reference addresses with SI, DI and BX
 	
 	clc
-	int 12h ;get some memory stuff...
+	int 12h ; Test if the BIOS has engough memory
 	jc not_engough_memory
 	
-	cmp ax, 8 ;check if we have 8 kb available
+	cmp ax, 64 ; Check for 64 kb
 	jl not_engough_memory
 	
-read_file:
-	mov ax, 19 ;read from root directory
-	call logical_to_hts ;get parameters for int 13h
+load_kernel:
+	mov ax, 19 ; Read root directory
+	call logical_to_hts
 	
-	mov si, buffer ;sectors of the
-	mov ax, ds ;point at our buffer
-	mov es, ax ;for storing readed
-	mov bx, si ;root directory
+	mov si, buffer
+	mov ax, ds
+	mov es, ax
+	mov bx, si
 	
-	mov al, 14 ;read 14 sectors
+	mov al, 14 ; Read the entire rootdir to get entries
 	call read_sector
 	
 	mov ax, ds
 	mov es, ax
-	mov di, buffer
+	mov di, buffer ; Point at the rootdir
 	
-	mov cx, word [root_dir_entries]
 	xor ax, ax
 .find_root_entry:
-	xchg cx, dx
-	
 	mov si, .filename
-	mov cx, 11 ;11 characters, the lenght of a FAT12 filename
+	mov cx, 11
 	rep cmpsb
-	je short .file_found ;file found!
+	jz short .file_found
 	
-	add ax, 32 ;skip one root entry
+	add ax, 20h
 	
 	mov di, buffer
 	add di, ax
 	
-	xchg dx, cx
-	loop .find_root_entry ;loop...
-	jmp no_file ;file not found
+	cmp byte [es:di], 0 ; Check that we didnt finished the rootdir listing
+	jnz short .find_root_entry ; checking the first byte of the entry
+
+	jmp no_file ; Kernel not found
 .file_found:
-	mov ax, word [es:di+0Fh] ;get cluster
+	mov ax, word [es:di+0Fh] ; Get cluster from entry
 	mov word [.cluster], ax
 	
-	mov ax, 1
+	xor ax, ax
+	inc ax
 	call logical_to_hts
 	
 	mov di, buffer
 	mov bx, di
 	
-	mov al, 9 ;read all sectors of the FAT
+	mov ax, word [sectors_per_fat] ; Read all the sectors of the FAT
 	call read_sector
 	
 	mov ax, 0500h
 	mov es, ax
 	xor bx, bx
 	
-	mov al, 1
-	mov ah, 2
+	mov ax, 0201h
 	
 	push ax
 .load_sector:
@@ -129,45 +114,50 @@ read_file:
 	int 13h
 	
 	jnc short .next_cluster
+	
 	call reset_drive
 	jmp short .load_sector
 .next_cluster:
 	mov ax, [.cluster]
 	xor dx, dx
-	mov bx, 3
+	mov bx, 3 ; BX = 3
 	mul bx
-	mov bx, 2
+	dec bx ; BX = 2
 	div bx
+	
 	mov si, buffer
 	add si, ax
 	
-	mov ax, word [ds:si] ;get cluster word...
+	mov ax, word [ds:si] ; Get cluster word...
 	
-	or dx, dx ;is our cluster even or odd?
+	or dx, dx ; Is our cluster even or odd?
 	jz short .even_cluster
 .odd_cluster:
 	push cx
-	mov cl, 4
-	shr ax, cl
+	
+	mov cl, 4 ; Shift ax to the right (only
+	shr ax, cl ; 63 clusters are allowed)
+	
 	pop cx
 	jmp short .check_eof
 .even_cluster:
 	and ax, 0FFFh
 .check_eof:
-	mov word [.cluster], ax ;put cluster in cluster
-	cmp ax, 0FF8h ;check for eof
-	jae short .end
+	mov word [.cluster], ax ; Put cluster in cluster
+	cmp ax, 0FF8h ; Check for EOF
+	jae short .end ; All loaded, time to jump into kernel
 	
 	push ax
-	mov ax, [bytes_per_sector]
-	add word [.pointer], ax ;bytes
+	mov ax, [bytes_per_sector] ; Go to the next sector
+	add word [.pointer], ax
 	pop ax
-	jmp short .load_sector
-.end: ;file is now loaded in the ram
-	pop ax ;pop off ax
-	mov dl, byte [drive_number] ;give kernel device number
 	
-	jmp 0500h:0000h ;jump to kernel
+	jmp short .load_sector
+.end: ; File is now loaded in the ram
+	pop ax ; Pop off ax
+	mov dl, byte [drive_number] ; Give kernel device number
+	
+	jmp 0500h:0000h ; Jump to kernel
 
 .filename			db "KERNEL  SYS"
 .cluster			dw 0

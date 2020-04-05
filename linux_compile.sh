@@ -4,34 +4,17 @@
 rm -f bin/*
 
 #compile assembly
-cd src
-cd boot
+
 echo "ASSEMBLY :: Bootloader"
-nasm -O0 -fbin -Wall bootloader.asm -o ../../bin/bootloader.boot
-cd ..
-cd kernel
+nasm -O0 -fbin -Wall src/boot/bootloader.asm -o bin/bootloader.boot
 echo "ASSEMBLY :: Kernel"
-nasm -O0 -fbin -Wall kernel.asm -o ../../bin/kernel.sys
-cd ..
-cd ..
+nasm -O0 -fbin -Wall src/kernel/kernel.asm -o bin/kernel.sys
 
-for i in src/programs/*.asm
-do
-	echo "ASSEMBLY :: $i"
-	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
-done
-
-for i in src/common/*.asm
-do
-	echo "ASSEMBLY :: $i"
-	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.lib || exit
-done
-
-for i in src/programs/*.lss
-do
-	echo "COPYING :: $i"
-	cp $i bin || exit
-done
+#for i in src/programs/*.asm
+#do
+#	echo "ASSEMBLY :: $i"
+#	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
+#done
 
 if [ ! -e disk/ldos.flp ]
 then
