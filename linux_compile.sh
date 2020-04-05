@@ -10,11 +10,16 @@ nasm -O0 -fbin -Wall src/boot/bootloader.asm -o bin/bootloader.boot
 echo "ASSEMBLY :: Kernel"
 nasm -O0 -fbin -Wall src/kernel/kernel.asm -o bin/kernel.sys
 
-#for i in src/programs/*.asm
-#do
-#	echo "ASSEMBLY :: $i"
-#	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
-#done
+for i in src/programs/*.asm
+do
+	echo "ASSEMBLY :: $i"
+	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
+done
+
+for i in src/common/*.lss
+do
+	cp $i bin/`basename $i .asm` || exit
+done
 
 if [ ! -e disk/ldos.flp ]
 then
