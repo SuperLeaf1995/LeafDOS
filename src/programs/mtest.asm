@@ -1,9 +1,9 @@
 use16
 cpu 8086
-org 0B00h
+org 0C00h
 
 start:
 	mov ah, 0Eh
-	mov al, 'A'
+	mov al, 'B'
 	int 10h
 	jmp start

@@ -16,6 +16,12 @@ do
 	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
 done
 
+for i in src/common/*.asm
+do
+	echo "ASSEMBLY :: $i"
+	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.lib || exit
+done
+
 for i in src/common/*.lss
 do
 	cp $i bin/`basename $i .asm` || exit
