@@ -56,48 +56,61 @@ start:
 	mov es, ax ; all data and extended segment into the
 	mov ds, ax ; kernel segment
 	
-	mov si, auto_name
+	mov si, mod_comm
 	call run_program
 	jc .error
-	
+
+.end:
+	jmp $
 .error:
+	mov ah, 0Eh
+	mov al, '!'
+	int 10h
 	jmp $
 
-auto_name		db "HIMEM   PRG"
-	
+mod_comm	db "HIMEM   PRG"
+
 ;
 ; Runs a program.
 ; As of now it can only load .COM files
 ;
 run_program:
+	mov ax, 0A00h
+	mov es, ax
 	mov ax, 0100h
 	call load_file
 	jc .error
 	
 	clc ; Set carry flag to clear
-	
-	jmp .load_com
 .load_com:
 	; TODO: Dynamically load programs
 	
-	mov es, bx ; Prepare for loading COM file
-	mov ds, bx
-	
-	push ax
-	mov ah, 0Eh
-	mov al, '?'
-	int 10h
-	pop ax
-	
-	push ax
-	call 0100h
-	pop ax
-	
-	mov es, ax
-	mov ds, ax
+	call 0A00h:0100h
 .error:
 	stc
 .end:
+	ret
+	
+;
+; Prints string in SI
+;
+print:
+	push ax
+	push si
+	
+	mov ah, 0Eh
+.loop:
+	lodsb
+	
+	test al, al
+	jz short .end
+	
+	int 10h
+
+	jmp short .loop
+.end:
+	pop si
+	pop ax
 	ret
 
 ;
@@ -105,8 +118,11 @@ run_program:
 ; Note: Set ES to desired segment for the file
 ;
 load_file:
-	mov word [.segment], ax
+	mov word [.offs], ax
 	mov word [.filename], si
+	
+	mov ax, es
+	mov word [.segment], ax
 	
 	call reset_drive
 	jc .error
@@ -115,6 +131,8 @@ load_file:
 	call logical_to_hts ; Get parameters for int 13h
 	
 	mov si, _DBUFF_ ; Sectors of the
+	mov ax, ds
+	mov es, ax
 	mov bx, si ; Root directory
 
 	mov al, 14 ; Read 14 sectors
@@ -131,7 +149,11 @@ load_file:
 	mov bx, -32
 .find_root_entry:
 	add bx, 32
+	
+	mov ax, ds
+	mov es, ax
 	mov di, _DBUFF_
+	
 	add di, bx
 	
 	xchg dx, cx
@@ -142,7 +164,9 @@ load_file:
 	je short .file_found
 	
 	xchg dx, cx
+	
 	loop .find_root_entry ; Loop...
+	
 	jmp .error
 .file_found:
 	mov ax, word [es:di+0Fh] ; Get cluster
@@ -166,7 +190,9 @@ load_file:
 	jnc short .read_fat
 	jmp .error
 .fat_done:
-	mov bx, word [.segment]
+	mov ax, word [.segment]
+	mov es, ax
+	mov bx, word [.offs]
 	
 	mov ax, 0201h
 	push ax
@@ -175,7 +201,9 @@ load_file:
 	add ax, 31
 	call logical_to_hts
 	
-	mov bx, word [.segment]
+	mov ax, word [.segment]
+	mov es, ax
+	mov bx, word [.offs]
 	
 	pop ax
 	push ax
@@ -216,8 +244,9 @@ load_file:
 	
 	push ax
 	mov ax, [bytes_per_sector]
-	add word [.segment], ax ; Bytes
+	add word [.offs], ax ; Set correct BPS
 	pop ax
+	
 	jmp short .load_sector
 .end: ; File is now loaded in the ram
 	pop ax ; Pop off ax
@@ -229,6 +258,7 @@ load_file:
 
 .filename			dw 0
 .segment			dw 0
+.offs				dw 0
 .cluster			dw 0
 .pointer			dw 0
 

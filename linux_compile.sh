@@ -7,13 +7,17 @@ rm -f bin/*
 
 echo "ASSEMBLY :: Bootloader"
 nasm -O0 -fbin -Wall src/boot/bootloader.asm -o bin/bootloader.boot
-echo "ASSEMBLY :: Kernel"
-nasm -O0 -fbin -Wall src/kernel/kernel.asm -o bin/kernel.sys
 
 for i in src/programs/*.asm
 do
 	echo "ASSEMBLY :: $i"
 	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
+done
+
+for i in src/kernel/*.asm
+do
+	echo "ASSEMBLY :: $i"
+	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.sys || exit
 done
 
 for i in src/common/*.asm
