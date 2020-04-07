@@ -182,21 +182,31 @@ _putc:
 	mov word [text_y], ax
 	
 	jmp short .end
-
 .newline:
+	inc word [text_y] ;increment y
+	
 	push ax
 	mov ax, word [text_y] ;see if it is time to scroll
 	cmp ax, word [text_h]
-	jge .do_scroll
+	jge .do_scroll_new
 	pop ax
-
-	inc word [text_y] ;increment y
 .return:
 	mov word [text_x], 0 ;return to 0
 	jmp short .end
 .back:
 	dec word [text_x] ;decrement char
 	jmp short .end
+	
+.do_scroll_new:
+	pop ax
+	
+	call _scroll
+	
+	mov ax, [text_h]
+	dec ax
+	mov word [text_y], ax
+	
+	jmp short .return
 	
 ;@name:			scroll
 ;@desc:			scrolls the screen down
