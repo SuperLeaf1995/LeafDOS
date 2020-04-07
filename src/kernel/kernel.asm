@@ -56,25 +56,110 @@ start:
 	mov es, ax ; all data and extended segment into the
 	mov ds, ax ; kernel segment
 	
+	push di
+	mov di, 02000h
+	mov byte [di+00h], 01h
+	mov word [di+01h], 0FFFh ; Set size to take an entire segment (minus ome stuff)
+	mov word [di+03h], 0B00h ; Start after kernel and _DBUF_
+	mov word [di+05h], 0000h ; Set the segment as our kernel segment!
+	mov byte [di+07h], 00h ; Set EOF for memtable
+	pop di
+	
 	mov si, mod_comm
 	call run_program
 	jc .error
 
-.end:
-	jmp $
 .error:
-	mov ah, 0Eh
-	mov al, '!'
-	int 10h
 	jmp $
 
-mod_comm	db "HIMEM   PRG"
+mod_comm	db "IO      LIB"
+error_mem	db "Not engough memory!",0Dh,0Ah,0
+
+;
+; Allocates memory with the size of (BX)
+; Returns pointer in (AX), CF clear on error
+;
+; For future reference, this is the structure of a
+; memtable entry:
+;
+; byte Status
+;	00h : No block (invalid memory block/end of memtable)
+;	01h : Free entry
+;	02h : Used entry
+; word Size
+; word StartOffset
+; word Segment
+;
+; * In total, each entry is 6 bytes long!
+; ** Regardless of segments, all memory blocks are treated as if they where
+; on a single segment
+;
+alloc:
+	push bx
+	push di
+	
+	mov di, 02000h-6 ; Point at the memtable (-6)
+.find_free:
+	add di, 6
+
+	cmp byte [di], 00h ; Empty entry (end of memtable)
+	je .no_free
+	
+	cmp byte [di], 01h ; Free entry!
+	je .check_free
+	
+	jmp short .find_free
+;
+; Checks that memory region is big engough for allocation
+;
+.check_free:
+	cmp word [di+01h], bx ; Is block big engough?
+	jl short .find_free ; If it is not, go back and find more blocks!
+	
+; Else...
+;
+; Splits a free memory block entry into a "used" and "free" part
+;
+.split_free_block:
+	; Shrink free block
+	mov ax, word [di+01h]
+	sub ax, bx ; Remove "used" part
+	mov word [di+01h], ax ; Set new value
+	; StartingOffset grows (used block takes first part of free block)
+	mov ax, word [di+03h]
+	push ax ; Save AX (for usage in the new "used" entry)
+	add ax, bx ; This also shrinks the block
+	mov word [di+03h], ax ; Set the new value
+	
+	; Set the new "used" block
+	add di, 6
+	mov byte [di], 02h ; Mark block as "used"
+	mov word [di+01h], bx ; Size of block is in entry now!
+	pop ax ; Now set the StartingOffset
+	mov word [di+03h], ax ; Set the StartingOffset
+	mov word [di+05h], ds ; Set the segment of "used" block
+	
+	stc
+.end:
+	pop di ; Restore registers
+	pop bx
+	ret ; Finally return
+;
+; No allocable block found, return CF
+;
+.no_free:
+	clc
+	jmp short .end
 
 ;
 ; Runs a program.
 ; As of now it can only load .COM files
 ;
 run_program:
+	mov bx, 4096 ; Allocate 4096 Bytes for our file
+	call alloc
+	jc .error
+	
 	mov ax, 0A00h
 	mov es, ax
 	mov ax, 0100h
@@ -84,8 +169,21 @@ run_program:
 	clc ; Set carry flag to clear
 .load_com:
 	; TODO: Dynamically load programs
+	; Write PSP for the COM file
+	xor di, di
+	mov word [es:di+00h], 0CD22h
 	
-	call 0A00h:0100h
+	mov ax, 0A00h ; Set the segments for the .COM file
+	mov ds, ax
+	mov es, ax ; Set ES to segment of DS
+	
+	call 0A00h:0100h ; Load COM file
+	
+	xor ax, ax ; Set back our segments
+	mov ds, ax
+	mov es, ax
+	
+	jmp short .end
 .error:
 	stc
 .end:

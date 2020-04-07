@@ -32,9 +32,11 @@
 ;  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ;
 
+%define _QEMU_
+
 use16
 cpu 8086
-org 0C00h
+org 0100h
 
 	jmp start
 
@@ -46,29 +48,27 @@ org 0C00h
 	jmp send_PS2_port_one
 	jmp send_PS2_port_two
 	
-	jmp initialize_PS2
+	;jmp initialize_PS2
 	
 	jmp enable_A20
 	jmp enable_A20_PS2
 	jmp testA20
+	
+	keymap		db 01h ; Use en-US keymap as default
 
 start:
+	mov ah, 0Eh
+	mov al, '%'
+	int 10h
+
 	;call initialize_PS2 ; Initialize PS/2 devices
-	
-	mov al, 0F4h
-	call send_PS2_port_one
-	
-	mov al, 0F4h
-	call send_PS2_port_two
+	;call get_PS2_info	; Get device info of PS/2 devices
 	
 	; Get PS/2 key loop
-	mov ah, 0Eh
 .loop:
-	call get_PS2_device_poll
+	call wait_for_key
 	
-	int 10h
-	
-	jmp .loop
+	jmp short .loop
 	
 printf:
 	push ax
@@ -88,227 +88,491 @@ printf:
 	pop si
 	pop ax
 	ret
-	
-ps2_deb_1	db "Disabling PS/2 devices",0Dh,0Ah,00h
-ps2_deb_2	db "Flushing output buffer",0Dh,0Ah,00h
-ps2_deb_3	db "Doing controller self test",0Dh,0Ah,00h
-ps2_deb_4	db "Enabling PS/2 devices",0Dh,0Ah,00h
-ps2_deb_5	db "Resetting PS/2 devices",0Dh,0Ah,00h
-ps2_deb_6	db "Finished initialization",0Dh,0Ah,00h
 
-initialize_PS2:
+;=======================================================================
+; UNUSED
+;=======================================================================
+
+;
+; Enables IRQs
+;
+enableIRQ:
+	push ax
+	
+	mov al, 0FDh ; Master PIC
+	out 021h, al
+	mov al, 0FFh ; Slave PIC
+	out 0A1h, al
+	
+	sti ; Enable IRQ generation
+	
+	pop ax
+	ret
+
+;
+; Remaps the PIC, with offs1 (BL) and offs2 (BH)
+;
+remapPIC:
 	push ax
 	push bx
 
-	cli
+	in al, 021h ; Save the PIC masks
+	mov [.master_PIC_mask], al ; Master
+	in al, 0A1h
+	mov [.slave_PIC_mask], al ; Slave
 	
-	xor bx, bx
+	mov al, 011h
+	out 020h, al ; Start PIC initialization
+	out 0A0h, al
 	
-	push si
-	mov si, ps2_deb_1
-	call printf
-	pop si
+	mov al, bl ; Set master PIC offset
+	out 021h, al
+	mov al, bh ; Set slave PIC offset
+	out 0A1h, al
 	
-	; Disable PS/2 devices
-	mov al, 0ADh ; Disable PS/2 device 1
-	call send_PS2_controller_command
-	jc .error
+	mov al, 4 ; Tell master PIC about slave PIC in IRQ2
+	out 021h, al
+	mov al, 2 ; Tell slave PIC its cascade identity
+	out 0A1h, al
 	
-	mov al, 0A7h ; Disable PS/2 device 2
-	call send_PS2_controller_command
-	jc .error
+	mov al, 1 ; Set master PIC in 8086 mode
+	out 021h, al
+	mov al, 1 ; Set slave PIC in 8086 mode
+	out 0A1h, al
 	
-	push si
-	mov si, ps2_deb_2
-	call printf
-	pop si
+	mov al, [.master_PIC_mask] ; Restore master PIC mask
+	out 021h, al
+	mov al, [.slave_PIC_mask] ; Restore slave PIC mask
+	out 0A1h, al
 	
-	; Flush output buffer
-	in al, 060h
-	
-	; Set correct controller configuration byte
-	mov al, 020h ; Read old controller value
-	call send_PS2_controller_command
-	jc .error
-	call get_PS2_controller_response
-	jc .error
-	
-	and al, 01000011b ; Set new controller value (disable translation and IRQs)
-	
-	xchg al, ah ; AH <--> AL
-	mov al, 060h ; AH is the next byte, send command 060h!
-	call send_PS2_controller_next_command
-	jc .error
-	xchg al, ah ; Reverse stuff again, now AH is in AL
-	
-	mov byte [configuration_byte], al ; Save old configuration byte (for hardware support)
-	
-	test al, 00100000b ; Test if there is a dual channel PS/2 port
-	jnz short .dual
-.single:
-	or bl, 00000001b ; Set bit 0 in bl
-	jmp short .do_self_test
-.dual:
-	or bl, 00000011b ; Set both bits in bl
-.do_self_test:
-	push si
-	mov si, ps2_deb_3
-	call printf
-	pop si
-
-	; Do controller self test
-	mov al, 0AAh
-	call send_PS2_controller_command
-	jc .error
-	call get_PS2_controller_response
-	jc .error
-	
-	cmp al, 055h ; Check that controller passed self test
-	jne .error
-	
-	; On some old hardware, the controller byte of the PS/2 controller
-	; is reset to their defaults, to avoid this, the controller byte
-	; is set again
-	mov ah, byte [configuration_byte]
-	mov al, 060h
-	call send_PS2_controller_next_command
-	jc .error
-	
-	; Perform interface tests, test the PS/2 ports and see wich one works
-	mov al, 0ABh
-	call send_PS2_controller_command
-	jc .error
-	call get_PS2_controller_response
-	jc .error
-	
-	test al, al ; If 00h, then test passed
-	jnz .first_device_fail
-	
-	test bl, 00000010b ; Does PS/2 controller has 2 devices?
-	jnz .check_second_device
-	
-	jmp short .enable_device
-.check_second_device:
-	mov al, 0A9h
-	call send_PS2_controller_command
-	jc .error
-	call get_PS2_controller_response
-	jc .error
-	
-	test al, al ; If 00h, then test passed
-	jnz .second_device_fail
-	jmp short .enable_device
-.first_device_fail:
-	and bl, 00000001b
-.second_device_fail:
-	and bl, 00000010b
-.enable_device:
-	push si
-	mov si, ps2_deb_4
-	call printf
-	pop si
-
-	test bl, 00000001b ; Do not enable failing first device
-	jz .reset_second_device ; Use second instead (if possible)
-	
-	mov al, 0AEh ; Send enable command
-	call send_PS2_controller_command
-	jc .error
-	
-	test bl, 00000010b ; Is here more devices?
-	jnz .enable_second_device
-	
-	jmp short .reset_device
-.enable_second_device:
-	test bl, 00000010b ; Is device 2 even working?
-	jnz .enable_second_device
-	
-	; Ok all set, enable second device
-	mov al, 0A8h
-	call send_PS2_controller_command
-	jc .error
-	
-.reset_device:
-	push si
-	mov si, ps2_deb_5
-	call printf
-	pop si
-
-	test bl, 00000001b
-	jz .reset_second_device
-	
-	mov al, 0FFh
-	call send_PS2_port_one
-	jc .error
-	call get_PS2_device_poll ; Get response
-	jc .error
-	
-	cmp al, 0FAh
-	jne .error
-
-	test bl, 00000010b
-	jnz .reset_second_device
-	
-	jmp short .end
-.reset_second_device:
-	mov al, 0FFh
-	call send_PS2_port_two
-	jc .error
-	call get_PS2_device_poll ; Get response
-	jc .error
-	
-	cmp al, 0FAh
-	jne .error
-.end:
-	push si
-	mov si, ps2_deb_6
-	call printf
-	pop si
-
-	sti
-	
-	pop bx ; Restore registers
+	pop bx
 	pop ax
-	
 	ret
 	
-.error:
+.master_PIC_mask	db 0
+.slave_PIC_mask		db 0
+
+configuration_byte	db 0
+
+setIRQ:
+	push ax
+	push bx
+	push di
+	push es
+	
+	xor ax, ax
+	mov es, ax
+	
+	xor bx, bx ; Set IRQ0 >> Timer PIT
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ0 ; Set offset
+	
+	mov bx, 1*4 ; Set IRQ1 >> PS/2 First device output
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ1 ; Set offset
+	
+	mov bx, 2*4 ; Set IRQ2 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ2 ; Set offset
+	
+	mov bx, 3*4 ; Set IRQ3 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ3 ; Set offset
+	
+	mov bx, 4*4 ; Set IRQ4 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ4 ; Set offset
+	
+	mov bx, 5*4 ; Set IRQ5 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ5 ; Set offset
+	
+	mov bx, 6*4 ; Set IRQ6 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ6 ; Set offset
+	
+	mov bx, 7*4 ; Set IRQ7 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ7 ; Set offset
+	
+	mov bx, 8*4 ; Set IRQ8 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ8 ; Set offset
+	
+	mov bx, 9*4 ; Set IRQ9 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ9 ; Set offset
+	
+	mov bx, 10*4 ; Set IRQ10 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ10 ; Set offset
+	
+	mov bx, 11*4 ; Set IRQ11 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ11 ; Set offset
+	
+	mov bx, 12*4 ; Set IRQ12 >> PS/2 Second device output
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ12 ; Set offset
+	
+	mov bx, 13*4 ; Set IRQ13 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ13 ; Set offset
+	
+	mov bx, 14*4 ; Set IRQ14 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ14 ; Set offset
+	
+	mov bx, 15*4 ; Set IRQ15 >> Unknown
+	mov word [es:bx+00h], cs ; Set segment
+	mov word [es:bx+02h], IRQ15 ; Set offset
+	
+	pop es
+	pop di
+	pop bx
+	pop ax
+	ret
+	
+IRQ0:
+	push bx
+	push ax
+	
+	mov ax, [.timer_fractions]
+	mov bx, [.timer_ms]
+	add [.timer_sys_fractions], ax
+	adc [.timer_sys_ms], bx
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	pop bx
+	iret
+
+.timer_fractions		dw 0
+.timer_ms				dw 0
+.timer_sys_fractions	dw 0
+.timer_sys_ms			dw 0
+
+IRQ1:
+	push ax
+	
+	in al, 060h
+	mov [PS2Buffer+00h], al
+	
+	mov ah, 0Eh
+	int 10h
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ2:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ3:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ4:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+
+IRQ5:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ6:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+
+IRQ7:
+	push ax
+	
+	mov al, 020h
+	out 020h, al
+	
+	pop ax
+	iret
+
+IRQ8:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ9:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ10:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ11:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+
+IRQ12:
+	push ax
+	
+	in al, 060h
+	mov [PS2Buffer+01h], al
+	
+	mov ah, 0Eh
+	int 10h
+	
+	mov al, 020h
+	out 0A0h, al
+	out 020h, al
+	
+	pop ax
+	iret
+	
+PS2Buffer		times 2	db 0
+
+IRQ13:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ14:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+IRQ15:
+	push ax
+	
+	mov al, 020h
+	out 0A0h, al ; Send 020h to both ports of the PIT
+	out 020h, al
+	
+	pop ax
+	iret
+	
+;=======================================================================
+; END OF UNUSED
+;=======================================================================
+
+wait_for_key:
+	push ax
+.loop:
+	call get_key
+	
+	cmp al, 128
+	je short .loop
+	
+	mov ah, 0Eh
+	int 10h
+	
+	pop ax
+	ret
+
+;
+; Gets a key from the keyboard, sends key in (AL)
+;
+get_key:
+	push bx
+	push si
+	
+	mov bh, ah
+	
+	call get_PS2_device_poll
+.mask:
+	mov si, caps
+	cmp byte [si], 00h ; Is shift on?
+	je short .lower
+	
+	; Do uppercase
+	mov si, en_us.upper
+.transform:
+	xor ah, ah ; Transform key into the keymap
+	add si, ax
+	
+	mov al, byte [si]
+	mov ah, bh
+	
+	cmp al, 09h
+	je short .toggle
+.end:
+	pop si
+	pop bx
+	ret
+.lower:
+	mov si, en_us.lower
+	jmp short .transform
+.toggle:
+	mov si, caps
+	neg byte [si]
+	
 	jmp short .end
 	
-configuration_byte		db 0
+;01 = ESC		02 = BACK		03 = TAB
+;04 = ENTER		05 = LCTRL		06 = LSHIFT
+;07 = RSHIFT	08 = LALT		09 = CAPSLOCK
+;0A = F1		0B = F2			0C = F3
+;0D = F4		0E = F5			0F = F6
+;81 = F7		82 = F8			83 = F9
+;84 = F10		85 = NUMLOCK	86 = SCROLLOCK
+;87 = F11		88 = F12		89 = RALT
 
+caps	db 0 ; Shift boolean for doing upper/lower casing
+
+en_us:
+		db "en-us  ",0
+	.lower:
+		db '?',01h,"1234567890-=",02h,03h,
+		db "qwertyuiop[]",04h,05h,"asdfghjkl;'`",06h,
+		db "\zxcvbnm,./",07h,'*',08h,' ',09h,0Ah,0Bh,
+		db 0Ch,0Dh,0Eh,0Fh,81h,82h,83h,84h,85h,86h,
+		db "789-456+1230.",'?','?','?',87h,88h,'?'
+		db '?','?','?',128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,'?',
+		db '?','?',128,128,'?','?','?','?','?','?',
+		db '?','?','?','?','?','?','?','?','?','?',
+		db '?','?','?','?','?','?','?','?','?','?',
+		db '?','?','?','?','?','?',128,'?','?',89h,
+		db '?','?','?'
+	.upper:
+		db '?',01h,"1234567890_+",02h,03h,
+		db "QWERTYUIOP{}",04h,05h,"ASDFGHJKL:@¬",06h,
+		db "\ZXCVBNM<>?",07h,'*',08h,' ',09h,0Ah,0Bh,
+		db 0Ch,0Dh,0Eh,0Fh,81h,82h,83h,84h,85h,86h,
+		db "789-456+1230.",'?','?','?',87h,88h,'?'
+		db '?','?','?',128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,128,
+		db 128,128,128,128,128,128,128,128,128,'?',
+		db '?','?',128,128,'?','?','?','?','?','?',
+		db '?','?','?','?','?','?','?','?','?','?',
+		db '?','?','?','?','?','?','?','?','?','?',
+		db '?','?','?','?','?','?',128,'?','?',89h,
+		db '?','?','?'
 ;
 ; Gets data from PS/2 device using polling method
 ;
 get_PS2_device_poll:
-	push ax
+; QEMU for some reason dosen't supports polling
+%ifndef _QEMU_
 	push cx
-	mov cx, 2000h
+	mov cx, 03h ; 3 tries before giving up
 .poll: ; Poll for status register (is PS/2 device sending data)
 	in al, 064h ; Get register status byte
 	
 	test al, 00000001b ; Check if bit 0 is set
-	jnz .do_out
+	jnz short .do_in
+	
+	mov ax, 1000h
+	call sleep
 	
 	loop .poll
-	jmp .error
-.do_out:
-	pop cx
-	pop ax
-	
+	jmp short .error
+.do_in:
 	in al, 060h ; Get the data
-.end:
 	clc
-	
+.end:
+	pop cx
+%endif
+%ifdef _QEMU_
+	in al, 060h
+	clc
+%endif
 	ret
 	
+%ifndef _QEMU_
 .error:
-	pop cx
-	pop ax
-	
 	stc
-	
 	jmp short .end
+%endif
+
+;
+; Sleeps for (AX) milliseconds
+;
+sleep:
+	push cx
+	push ax
+	
+	xchg ax, cx
+.sleep:
+	loop .sleep
+.end:
+	pop ax
+	pop cx
+	
+	ret
 
 ;
 ; Sends data (AL) to the second PS/2 device
@@ -346,7 +610,6 @@ send_PS2_port_two:
 	stc
 	
 	jmp short .end
-	ret
 
 ;
 ; Sends data (AL) to first PS/2 device
@@ -397,13 +660,13 @@ get_PS2_controller_response:
 	in al, 064h ; Get register status byte
 	
 	test al, 00000001b ; Check if bit 0 is set
-	jnz .do_in
+	jnz short .do_in
 	
 	test al, 10000000b ; Check if there was a parity error
-	jnz .error
+	jnz short .error
 	
 	test al, 01000000b ; Check for timeout-error
-	jnz .error
+	jnz short .error
 	
 	jmp short .poll
 .do_in:
