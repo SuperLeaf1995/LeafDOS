@@ -81,7 +81,7 @@ start:
 	mov si, kernel_program_start
 	call near _printf
 	
-	mov si, kernel_buffer.fat12 ; Arguments are given in SI
+	mov si, kernel_buffer.keyboard ; Arguments are given in SI
 	call SEG_PROGRAM
 	
 	mov si, kernel_program_end
