@@ -6,24 +6,24 @@ rm -f bin/*
 #compile assembly
 
 echo "ASSEMBLY :: Bootloader"
-nasm -O0 -fbin -Wall src/boot/bootloader.asm -o bin/bootloader.boot
+nasm -O0 -fbin -t -Wall src/boot/bootloader.asm -o bin/bootloader.boot
 
 for i in src/programs/*.asm
 do
 	echo "ASSEMBLY :: $i"
-	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.prg || exit
+	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.com || exit
 done
 
 for i in src/kernel/*.asm
 do
 	echo "ASSEMBLY :: $i"
-	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.sys || exit
+	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.sys || exit
 done
 
 for i in src/common/*.asm
 do
 	echo "ASSEMBLY :: $i"
-	nasm -O0 -fbin -Isrc/common -Wall $i -o bin/`basename $i .asm`.lib || exit
+	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.lib || exit
 done
 
 for i in src/common/*.lss

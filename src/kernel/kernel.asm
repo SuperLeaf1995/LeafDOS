@@ -72,7 +72,7 @@ start:
 .error:
 	jmp $
 
-mod_comm	db "IO      LIB"
+mod_comm	db "COMMAND COM"
 error_mem	db "Not engough memory!",0Dh,0Ah,0
 
 ;
