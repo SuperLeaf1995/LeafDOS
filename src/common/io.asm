@@ -57,10 +57,6 @@ org 0100h
 	keymap		db 01h ; Use en-US keymap as default
 
 start:
-	mov ah, 0Eh
-	mov al, '%'
-	int 10h
-
 	;call initialize_PS2 ; Initialize PS/2 devices
 	;call get_PS2_info	; Get device info of PS/2 devices
 	
@@ -70,24 +66,182 @@ start:
 	
 	jmp short .loop
 	
+putc:
+	push si
+	push di
+	push ax
+	push es
+	push bx
+	
+	mov ah, [text_attr]
+	
+	cmp al, 0Dh ; Check for newline
+	je .newline
+	
+	cmp al, 0Ah
+	je .return
+	
+	cmp al, 08h
+	je .back
+	
+	push ax
+	
+	mov ax, [text_seg] ; Segmentate
+	mov es, ax ; To text location
+	
+	mov ax, word [text_y] ; See if it is time to scroll
+	cmp ax, word [text_h]
+	jge .do_scroll
+	
+	mov ax, [text_w] ; y*w
+	mov bx, [text_y]
+	mul bx ; Result now in ax
+	add ax, word [text_x] ; Add x to ax
+	shl ax, 1
+	mov bx, ax
+	
+	pop ax
+	
+	mov word [es:bx], ax ; Put char with attrib
+	
+	inc word [text_x]
+.end:
+	pop bx ; Restore registers
+	pop es
+	pop ax
+	pop di
+	pop si
+	ret
+.do_scroll:
+	pop ax
+	
+	call scroll
+	
+	mov ax, [text_h]
+	dec ax
+	mov word [text_y], ax
+	
+	jmp short .end
+
+.newline:
+	push ax
+	mov ax, word [text_y] ; See if it is time to scroll
+	cmp ax, word [text_h]
+	jge .do_scroll
+	pop ax
+
+	inc word [text_y] ; Increment y
+.return:
+	mov word [text_x], 0 ; Return to 0
+	jmp short .end
+.back:
+	dec word [text_x] ; Decrement char
+	jmp short .end
+
+scroll:
+	push ax
+	
+	dec word [text_y] ; Decrease y
+	dec word [text_y]
+	
+	mov ax, [text_seg] ; Set segments
+	mov es, ax ; To text location
+	
+	mov cx, word [text_w] ; Bytes to copy
+	mov ax, word [text_h] ; (Size of screen - 1 scanline)
+	dec ax
+	mul cx
+	mov cx, ax ; Transfer to counter register
+	
+	xor di, di ; DI starts at line 0
+	
+	mov si, [text_w]
+	shl si, 1 ; Shift to left to align with word
+.move_lines:
+	mov ax, word [es:si]
+	mov word [es:di], ax
+	
+	add di, 2
+	add si, 2
+	
+	loop .move_lines
+	
+	mov di, [text_w] ; Position of last scanline
+	mov ax, [text_h]
+	dec ax
+	mul di
+	mov di, ax ; Transfer to di
+	shl di, 1 ; Align to word by shifting to left
+	
+	mov cx, word [text_w]
+	
+	mov ah, byte [text_attr]
+	mov al, ' '
+.clear_last: ; Clear bottomest line of the text memory
+	mov word [es:di], ax
+	
+	add di, 2
+	
+	loop .clear_last
+	
+	pop ax
+	ret
+	
+clrscr:
+	push ax
+	push bx
+	push cx
+	push es
+	push di
+	
+	mov ax, [text_seg] ;segmentate
+	mov es, ax ;to text location
+	
+	mov bx, [text_w] ;total size of thing
+	mov ax, [text_h]
+	mul bx
+	mov cx, ax ;place in the counter
+	
+	mov ah, [text_attr]
+	mov al, ' '
+	xor di, di
+.loop:
+	mov word [es:di], ax
+	
+	add di, 2 ;skip a full word
+	
+	loop .loop
+	
+	pop di
+	pop es
+	pop cx
+	pop bx
+	pop ax
+	ret
+
 printf:
 	push ax
 	push si
-	
-	mov ah, 0Eh
 .loop:
 	lodsb
 	
-	test al, al
-	jz short .end
-	
-	int 10h
-	
+	test al, al ; Is character zero?
+	jz short .end ; Yes, end
+
+	call putc
+
 	jmp short .loop
 .end:
 	pop si
 	pop ax
 	ret
+
+text_seg	dw 0B800h
+text_w		dw 80
+text_h		dw 25
+text_x		dw 0
+text_y		dw 0
+text_attr	dw 01Bh
 
 ;=======================================================================
 ; UNUSED
@@ -423,8 +577,7 @@ wait_for_key:
 	cmp al, 128
 	je short .loop
 	
-	mov ah, 0Eh
-	int 10h
+	call putc
 	
 	pop ax
 	ret
