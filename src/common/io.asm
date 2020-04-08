@@ -38,26 +38,52 @@ use16
 cpu 8086
 org 0100h
 
+	db "START",0
 	jmp start
 
+	db "GET_PS2_CONTROLLER_RESPONSE",0
 	jmp get_PS2_controller_response
+	
+	db "GET_PS2_DEVICE_POLL"
 	jmp get_PS2_device_poll
+	
+	db "SEND_PS2_CONTROLLER_COMMAND",0
 	jmp send_PS2_controller_command
+	
+	db "SEND_PS2_CONTROLLER_NEXT_COMMAND",0
 	jmp send_PS2_controller_next_command
+	
+	db "SEND_PS2_PORT_ONE",0
 	jmp send_PS2_port_one
+	
+	db "SEND_PS2_PORT_TWO",0
 	jmp send_PS2_port_two
+	
+	db "ENABLE_A20",0
 	jmp enable_A20
+	
+	db "ENABLE_A20_PS2",0
 	jmp enable_A20_PS2
+	
+	db "TEST_A20",0
 	jmp testA20
 	
+	db "PUTC",0
 	jmp putc
+	
+	db "PRINTF",0
 	jmp printf
+	
+	db "SCROLL",0
 	jmp scroll
 	
+	db "WAIT_FOR_KEY",0
 	jmp wait_for_key
 	
+	db "SLEEP",0
 	jmp sleep
 	
+	db "PUTC",0
 	jmp putc
 	
 	keymap		db 01h ; Use en-US keymap as default

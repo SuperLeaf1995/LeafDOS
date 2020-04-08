@@ -32,6 +32,8 @@ use16
 cpu 8086
 org 0100h
 
+jmp short start
+
 SEG_PROGRAM		equ	5000h
 SEG_BUFFER		equ	0A00h
 
@@ -73,10 +75,7 @@ start:
 	mov si, kernel_buffer.fat12
 	mov ax, SEG_PROGRAM
 	call near _fopen
-	jnc short .file_ok
 	jc short .no_file
-	
-	jmp short .loop
 .file_ok:
 	mov si, kernel_program_start
 	call near _printf

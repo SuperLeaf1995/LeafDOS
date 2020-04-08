@@ -41,8 +41,13 @@ org 0500h
 
 jmp short start
 
+; This functions are used by programs
+jmp dummy
+jmp call_lib
 jmp run_program
 jmp load_file
+jmp alloc
+jmp free
 
 start:
 	xor ax, ax
@@ -56,8 +61,9 @@ start:
 	mov es, ax ; all data and extended segment into the
 	mov ds, ax ; kernel segment
 	
+	; Create a free block of memory!
 	push di
-	mov di, 02000h
+	mov di, 2000h
 	mov byte [di+00h], 01h
 	mov word [di+01h], 0FFFh ; Set size to take an entire segment (minus ome stuff)
 	mov word [di+03h], 0B00h ; Start after kernel and _DBUF_
@@ -65,15 +71,84 @@ start:
 	mov byte [di+07h], 00h ; Set EOF for memtable
 	pop di
 	
+	mov ax, 5000h
+	mov si, mod_lib
+	call load_file
+	jc .error
+	
 	mov si, mod_comm
 	call run_program
 	jc .error
-
 .error:
 	jmp $
 
+mod_lib		db "IO      LIB"
 mod_comm	db "COMMAND COM"
 error_mem	db "Not engough memory!",0Dh,0Ah,0
+
+dummy:
+	mov ah, 0Eh
+	mov al, '?'
+	int 10h
+	jmp short dummy
+
+;
+; Calls a function from a dynamically linked library (DLL)
+; in LeafDOS
+;
+; SI: Name of function to search
+; CF: Clear on error
+;
+call_lib:
+	push ax
+	push bx
+	push cx
+	push di
+	
+	mov di, 5000h ; Libraries load at 5000h
+.find_function:
+	call strlen
+	
+	rep cmpsb
+	je short .found_function
+	
+	jmp short .find_function
+.found_function:
+	add si, cx ; Skip the name of function
+	; After the name of the function the jump vector comes in!
+	mov ax, si
+	call ax ; Call the function
+	
+	stc ; Set the carry
+.end:
+	pop di
+	pop cx
+	pop bx
+	pop ax
+	ret
+	
+.error:
+	clc
+	jmp short .end
+
+;
+; Gets lenght of a string in SI, returns CX
+;
+strlen:
+	push ax
+	push si
+.loop:
+	lodsb
+	inc cx
+	
+	test al, al
+	jnz short .loop
+.end:
+	dec cx
+	
+	pop si
+	pop ax
+	ret
 
 ;
 ; Allocates memory with the size of (BX)
@@ -152,13 +227,71 @@ alloc:
 	jmp short .end
 
 ;
+; Frees memory (TODO: Merge free blocks)
+;
+; AX: Pointer of memory
+; BX: Segment
+; Returns clear Carry Flag on error
+free:
+	push ax
+	push bx
+	push cx
+	push di
+	push es
+
+	mov di, 02000h-6
+;
+;First, let's find the block wich has AX and BX
+;
+.find_block:
+	add di, 6 ; Skip one full entry
+
+	cmp [di+03h], ax ; If pointer is the same lets try to find if same segment too
+	je short .is_same_segment
+
+	cmp byte [di+00h], 00h ; End of memtable?
+	je .no_free
+	
+	jmp short .find_block
+;
+; Check validity (is it of the same segment?)
+;
+.is_same_segment:
+	cmp word [di+05h], bx ; Is it the same segment?
+	jne short .find_block
+	
+	; Now it's time to set it as "free" instead of used
+	mov byte [di+00h], 01h ; 01h = Free block
+
+	stc
+;
+; We are done!
+;
+.end:
+	pop es
+	pop di
+	pop cx
+	pop bx
+	pop ax
+	ret
+	
+.no_free:
+	clc
+	jmp short .end
+
+;
 ; Runs a program.
 ; As of now it can only load .COM files
 ;
 run_program:
+	push ax
+	push bx
+
 	mov bx, 4096 ; Allocate 4096 Bytes for our file
 	call alloc
 	jc .error
+	
+	push ax
 	
 	mov ax, 0A00h
 	mov es, ax
@@ -187,6 +320,13 @@ run_program:
 .error:
 	stc
 .end:
+	pop ax ; Free the used memory for the program
+	
+	call free
+	jc .error
+	
+	pop bx
+	pop ax
 	ret
 	
 ;
