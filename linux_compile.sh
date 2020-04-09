@@ -3,6 +3,16 @@
 #clear past stuff
 rm -f bin/*
 
+if [ ! -e disk ]
+then
+	mkdir disk || exit
+fi
+
+if [ ! -e bin ]
+then
+	mkdir bin || exit
+fi
+
 #compile assembly
 
 echo "ASSEMBLY :: Bootloader"
