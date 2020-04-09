@@ -38,7 +38,7 @@ done
 
 for i in src/common/*.lss
 do
-	cp $i bin/`basename $i .asm` || exit
+	cp $i bin/`basename $i` || exit
 done
 
 if [ ! -e disk/ldos.flp ]

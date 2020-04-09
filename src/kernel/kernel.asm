@@ -33,21 +33,21 @@
 ;  
 
 _KERNEL_			equ 0500h
-_DBUFF_				equ 0800h
+_DBUFF_				equ 0A00h
+_MEMTAB_			equ 7000h
 
 use16
 cpu 8086
 org 0500h
 
-jmp short start
+	jmp start
 
-; This functions are used by programs
-jmp dummy
-jmp call_lib
-jmp run_program
-jmp load_file
-jmp alloc
-jmp free
+; This functions are used by kernel programs
+	jmp load_file		;0003
+	jmp list_files		;0006
+	jmp dummy			;0009
+	jmp alloc			;0012
+	jmp free			;0015
 
 start:
 	xor ax, ax
@@ -61,9 +61,11 @@ start:
 	mov es, ax ; all data and extended segment into the
 	mov ds, ax ; kernel segment
 	
+	;call list_files
+	
 	; Create a free block of memory!
 	push di
-	mov di, 2000h
+	mov di, _MEMTAB_
 	mov byte [di+00h], 01h
 	mov word [di+01h], 0FFFh ; Set size to take an entire segment (minus ome stuff)
 	mov word [di+03h], 0B00h ; Start after kernel and _DBUF_
@@ -71,19 +73,15 @@ start:
 	mov byte [di+07h], 00h ; Set EOF for memtable
 	pop di
 	
-	mov ax, 5000h
-	mov si, mod_lib
-	call load_file
-	jc .error
+	call list_files
 	
-	mov si, mod_comm
-	call run_program
+	mov si, mod_com ; Run a device program to load adequate drivers
+	call run_kernel_program
 	jc .error
 .error:
 	jmp $
 
-mod_lib		db "IO      LIB"
-mod_comm	db "COMMAND COM"
+mod_com		db "DEV     COM"
 error_mem	db "Not engough memory!",0Dh,0Ah,0
 
 dummy:
@@ -137,6 +135,7 @@ call_lib:
 strlen:
 	push ax
 	push si
+	
 .loop:
 	lodsb
 	inc cx
@@ -173,7 +172,7 @@ alloc:
 	push bx
 	push di
 	
-	mov di, 02000h-6 ; Point at the memtable (-6)
+	mov di, _MEMTAB_-6 ; Point at the memtable (-6)
 .find_free:
 	add di, 6
 
@@ -235,11 +234,9 @@ alloc:
 free:
 	push ax
 	push bx
-	push cx
 	push di
-	push es
 
-	mov di, 02000h-6
+	mov di, _MEMTAB_-6
 ;
 ;First, let's find the block wich has AX and BX
 ;
@@ -268,9 +265,7 @@ free:
 ; We are done!
 ;
 .end:
-	pop es
 	pop di
-	pop cx
 	pop bx
 	pop ax
 	ret
@@ -278,12 +273,11 @@ free:
 .no_free:
 	clc
 	jmp short .end
-
+	
 ;
-; Runs a program.
-; As of now it can only load .COM files
+; Runs a program in kernel mode.
 ;
-run_program:
+run_kernel_program:
 	push ax
 	push bx
 
@@ -293,28 +287,15 @@ run_program:
 	
 	push ax
 	
-	mov ax, 0A00h
-	mov es, ax
-	mov ax, 0100h
+	mov ax, 1000h
 	call load_file
 	jc .error
 	
 	clc ; Set carry flag to clear
 .load_com:
 	; TODO: Dynamically load programs
-	; Write PSP for the COM file
-	xor di, di
-	mov word [es:di+00h], 0CD22h
 	
-	mov ax, 0A00h ; Set the segments for the .COM file
-	mov ds, ax
-	mov es, ax ; Set ES to segment of DS
-	
-	call 0A00h:0100h ; Load COM file
-	
-	xor ax, ax ; Set back our segments
-	mov ds, ax
-	mov es, ax
+	call 1000h ; Load program file
 	
 	jmp short .end
 .error:
@@ -323,20 +304,45 @@ run_program:
 	pop ax ; Free the used memory for the program
 	
 	call free
-	jc .error
+	;jc .error
 	
 	pop bx
 	pop ax
 	ret
-	
-;
-; Prints string in SI
-;
-print:
-	push ax
+
+print_fat12:
+	push bp
 	push si
+	push ax
+	push bx
+	push cx
 	
 	mov ah, 0Eh
+	mov cx, 11
+	xor bh, bh
+.loop:
+	lodsb
+	
+	int 10h
+	
+	loop .loop
+.end:
+	pop cx
+	pop bx
+	pop ax
+	pop si
+	pop bp
+	ret
+
+print:
+	push bp
+	push si
+	push ax
+	push bx
+	push cx
+	
+	mov ah, 0Eh
+	xor bh, bh
 .loop:
 	lodsb
 	
@@ -344,12 +350,93 @@ print:
 	jz short .end
 	
 	int 10h
-
+	
 	jmp short .loop
 .end:
-	pop si
+	pop cx
+	pop bx
 	pop ax
+	pop si
+	pop bp
 	ret
+	
+;
+; Lists all files
+;
+list_files:
+	stc
+	call reset_drive
+	jc .error
+
+	mov ax, 19 ; Read from root directory
+	call logical_to_hts ; Get parameters for int 13h
+	
+	mov si, _DBUFF_ ; Read the root directoy and place
+	mov ax, ds ; It on the disk buffer
+	mov es, ax
+	mov bx, si
+
+	mov al, 14 ; Read 14 sectors
+	mov ah, 2
+	
+.read_root_dir:
+	push dx ; Save DX from destruction in some bioses
+	cli ; Disable interrupts to not mess up
+	
+	stc ; Set carry flag (some BIOSes do not set it!)
+	int 13h
+	
+	sti ; Enable interrupts again
+	pop dx
+	
+	jnc short .root_dir_done ; If everything was good, go to find entries
+	
+	call reset_drive
+	jnc short .read_root_dir
+	
+	jmp .error
+.root_dir_done:
+	cmp al, 14 ; Check that all sectors have been read
+	jne .error
+
+	mov cx, word [root_dir_entries]
+	mov bx, -32
+	mov ax, ds
+	mov es, ax
+.find_root_entry:	
+	add bx, 32
+	mov di, _DBUFF_
+	
+	add di, bx
+	
+	cmp byte [di], 000h
+	je short .skip_entry
+	
+	cmp byte [di], 0E5h
+	je short .skip_entry
+	
+	cmp byte [di+11], 0Fh
+	je short .skip_entry
+	
+	cmp byte [di+11], 08h
+	je short .skip_entry
+	
+	cmp byte [di+11], 00111111b
+	je short .skip_entry
+	
+	push si
+	mov si, di
+	call print_fat12
+	mov si, newline
+	call print
+	pop si
+
+.skip_entry:
+	loop .find_root_entry ; Loop...
+.error:
+	ret
+
+newline				db 0Dh,0Ah,00h
 
 ;
 ; Loads a file in AX searching for file with the name in SI
@@ -362,37 +449,70 @@ load_file:
 	mov ax, es
 	mov word [.segment], ax
 	
+	stc
 	call reset_drive
 	jc .error
 
 	mov ax, 19 ; Read from root directory
 	call logical_to_hts ; Get parameters for int 13h
 	
-	mov si, _DBUFF_ ; Sectors of the
-	mov ax, ds
+	mov si, _DBUFF_ ; Read the root directoy and place
+	mov ax, ds ; It on the disk buffer
 	mov es, ax
-	mov bx, si ; Root directory
+	mov bx, si
 
 	mov al, 14 ; Read 14 sectors
 	mov ah, 2
+	
 .read_root_dir:
-	stc
+	push dx ; Save DX from destruction in some bioses
+	cli ; Disable interrupts to not mess up
+	
+	stc ; Set carry flag (some BIOSes do not set it!)
 	int 13h
-	jnc short .root_dir_done
+	
+	sti ; Enable interrupts again
+	pop dx
+	
+	jnc short .root_dir_done ; If everything was good, go to find entries
+	
 	call reset_drive
 	jnc short .read_root_dir
+	
 	jmp .error
 .root_dir_done:
+	cmp al, 14 ; Check that all sectors have been read
+	jne .error
+
+	push si
+	mov si, [.filename]
+	call print
+	pop si
+
 	mov cx, word [root_dir_entries]
 	mov bx, -32
-.find_root_entry:
-	add bx, 32
-	
 	mov ax, ds
 	mov es, ax
+.find_root_entry:
+	add bx, 32
 	mov di, _DBUFF_
 	
 	add di, bx
+	
+	cmp byte [di], 000h
+	je short .skip_entry
+	
+	cmp byte [di], 0E5h
+	je short .skip_entry
+	
+	cmp byte [di+11], 0Fh
+	je short .skip_entry
+	
+	cmp byte [di+11], 08h
+	je short .skip_entry
+	
+	cmp byte [di+11], 00111111b
+	je short .skip_entry
 	
 	xchg dx, cx
 
@@ -403,6 +523,7 @@ load_file:
 	
 	xchg dx, cx
 	
+.skip_entry:
 	loop .find_root_entry ; Loop...
 	
 	jmp .error
@@ -420,8 +541,14 @@ load_file:
 	mov al, 09h ; read all sectors of the FAT
 	mov ah, 2
 .read_fat:
+	push dx
+	cli
+	
 	stc
 	int 13h
+	
+	sti
+	pop dx
 	
 	jnc short .fat_done
 	call reset_drive
@@ -446,8 +573,14 @@ load_file:
 	pop ax
 	push ax
 	
+	push dx
+	cli
+	
 	stc
 	int 13h
+	
+	sti
+	pop dx
 	
 	jnc short .next_cluster
 	call reset_drive
@@ -457,6 +590,7 @@ load_file:
 	xor dx, dx
 	mov bx, 3
 	mul bx
+	
 	mov bx, 2
 	div bx
 	
@@ -469,9 +603,12 @@ load_file:
 	jz short .even_cluster
 .odd_cluster:
 	push cx
+	
 	mov cl, 4
 	shr ax, cl ; Shift 4 bits ax
+	
 	pop cx
+	
 	jmp short .check_eof
 .even_cluster:
 	and ax, 0FFFh
@@ -480,15 +617,16 @@ load_file:
 	cmp ax, 0FF8h ; Check for eof
 	jae short .end
 	
-	push ax
-	mov ax, [bytes_per_sector]
-	add word [.offs], ax ; Set correct BPS
-	pop ax
+	;push ax
+	;mov ax, [bytes_per_sector]
+	add word [.offs], 512 ; Set correct BPS
+	;pop ax
 	
 	jmp short .load_sector
 .end: ; File is now loaded in the ram
 	pop ax ; Pop off ax
 	clc
+	
 	ret
 .error:
 	stc
@@ -503,10 +641,14 @@ load_file:
 reset_drive:
 	push ax
 	push dx
+	
 	xor ax, ax
+	
 	mov dl, byte [device_number]
+	
 	stc
 	int 13h
+	
 	pop dx
 	pop ax
 	ret
@@ -514,20 +656,29 @@ reset_drive:
 logical_to_hts:
 	push bx
 	push ax
+	
 	mov bx, ax
+	
 	xor dx, dx
 	div word [sectors_per_track]
+	
 	add dl, 01h
+	
 	mov cl, dl
 	mov ax, bx
+	
 	xor dx, dx
 	div word [sectors_per_track]
+	
 	xor dx, dx
 	div word [sides]
+	
 	mov dh, dl
 	mov ch, al
+	
 	pop ax
 	pop bx
+	
 	mov dl, byte [device_number]
 	ret
 
@@ -536,3 +687,6 @@ bytes_per_sector		dw 512
 sectors_per_track		dw 18
 sides					dw 2
 device_number			db 0
+
+stack:
+	times 256 db 0
