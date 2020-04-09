@@ -73,10 +73,10 @@ start:
 	mov byte [di+07h], 00h ; Set EOF for memtable
 	pop di
 	
-	call list_files
+	;call list_files
 	
 	mov si, mod_com ; Run a device program to load adequate drivers
-	call run_kernel_program
+	call run_program
 	jc .error
 .error:
 	jmp $
@@ -277,17 +277,11 @@ free:
 ;
 ; Runs a program in kernel mode.
 ;
-run_kernel_program:
+run_program:
 	push ax
 	push bx
-
-	mov bx, 4096 ; Allocate 4096 Bytes for our file
-	call alloc
-	jc .error
 	
-	push ax
-	
-	mov ax, 1000h
+	mov ax, 5000h
 	call load_file
 	jc .error
 	
@@ -295,17 +289,12 @@ run_kernel_program:
 .load_com:
 	; TODO: Dynamically load programs
 	
-	call 1000h ; Load program file
+	call 5000h; Load program file
 	
 	jmp short .end
 .error:
 	stc
 .end:
-	pop ax ; Free the used memory for the program
-	
-	call free
-	;jc .error
-	
 	pop bx
 	pop ax
 	ret
@@ -473,6 +462,11 @@ load_file:
 	
 	sti ; Enable interrupts again
 	pop dx
+	
+	push si
+	mov si, [.filename]
+	call print
+	pop si
 	
 	jnc short .root_dir_done ; If everything was good, go to find entries
 	
@@ -687,6 +681,3 @@ bytes_per_sector		dw 512
 sectors_per_track		dw 18
 sides					dw 2
 device_number			db 0
-
-stack:
-	times 256 db 0
