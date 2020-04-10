@@ -55,7 +55,9 @@ start:
 .loop:
 	mov al, 0Dh
 	call near _putc
-	mov al, '>'
+	mov al, '#'
+	call near _putc
+	mov al, ' '
 	call near _putc
 	
 	call near update_cursor_to_curr
@@ -89,10 +91,17 @@ start:
 	call near _printf
 	jmp short .loop
 	
-.not_engough_memory:
+.not_enough_memory:
 	mov si, kernel_memory_error
 	call near _printf
-	jmp short .loop
+
+	mov ax, 0000
+	int 16h
+
+	int 19h
+	
+	cli
+	hlt		; this will never happen
 
 root_dir_entries		dw 224
 bytes_per_sector		dw 512
@@ -101,7 +110,7 @@ sides					dw 2
 device_number			db 0
 
 kernel_greet			db "LeafDOS v%i.%i",0x0D
-						db "Kernel hot-date: ",__DATE__,0x0D
+						db "Assembly date and time: ",__DATE__," ",__TIME__,0x0D
 						db 0x00
 						
 kernel_program_start	db "Starting program",0x0D
@@ -113,8 +122,8 @@ kernel_program_end		db "Program finished",0x0D
 kernel_no_program		db "File not found",0x0D
 						db 0x00
 
-kernel_memory_error		db "LeafDOS requires atleast 64 KB of memory to run",0x0D
-						db 0x00
+kernel_memory_error		db "FATAL: LeafDOS requires at least 64 KB of memory to run",0x0A,0x0D
+						db "Press any key to restart . . .", 0x00
 
 kernel_buffer:
 	.keyboard			times 128 db 0
