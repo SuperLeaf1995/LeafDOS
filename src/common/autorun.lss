@@ -1,9 +1,1 @@
-cga=vcga.sys
-ega=vega.sys
-mcga=vmcga.sys
-mda=vmda.sys
-vga=vga.sys
-com=com.sys
-lpt=lpt.sys
-ps2=ps2.sys
-joystick=joystick.sys
+COMMAND COM

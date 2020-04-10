@@ -34,7 +34,6 @@
 
 _KERNEL_			equ 0500h
 _DBUFF_				equ 0A00h
-_MEMTAB_			equ 7000h
 
 use16
 cpu 8086
@@ -44,10 +43,6 @@ org 0500h
 
 ; This functions are used by kernel programs
 	jmp load_file		;0003
-	jmp list_files		;0006
-	jmp dummy			;0009
-	jmp alloc			;0012
-	jmp free			;0015
 
 start:
 	xor ax, ax
@@ -63,71 +58,14 @@ start:
 	
 	;call list_files
 	
-	; Create a free block of memory!
-	push di
-	mov di, _MEMTAB_
-	mov byte [di+00h], 01h
-	mov word [di+01h], 0FFFh ; Set size to take an entire segment (minus ome stuff)
-	mov word [di+03h], 0B00h ; Start after kernel and _DBUF_
-	mov word [di+05h], 0000h ; Set the segment as our kernel segment!
-	mov byte [di+07h], 00h ; Set EOF for memtable
-	pop di
-	
-	;call list_files
-	
-	mov si, mod_com ; Run a device program to load adequate drivers
+	mov si, cmd
 	call run_program
-	jc .error
-.error:
+	
 	jmp $
-
-mod_com		db "DEV     COM"
-error_mem	db "Not engough memory!",0Dh,0Ah,0
-
-dummy:
-	mov ah, 0Eh
-	mov al, '?'
-	int 10h
-	jmp short dummy
-
-;
-; Calls a function from a dynamically linked library (DLL)
-; in LeafDOS
-;
-; SI: Name of function to search
-; CF: Clear on error
-;
-call_lib:
-	push ax
-	push bx
-	push cx
-	push di
 	
-	mov di, 5000h ; Libraries load at 5000h
-.find_function:
-	call strlen
-	
-	rep cmpsb
-	je short .found_function
-	
-	jmp short .find_function
-.found_function:
-	add si, cx ; Skip the name of function
-	; After the name of the function the jump vector comes in!
-	mov ax, si
-	call ax ; Call the function
-	
-	stc ; Set the carry
-.end:
-	pop di
-	pop cx
-	pop bx
-	pop ax
-	ret
-	
-.error:
-	clc
-	jmp short .end
+; Etc
+tmpbuf		times 16 db 0
+cmd			db "COMMAND COM"
 
 ;
 ; Gets lenght of a string in SI, returns CX
@@ -150,282 +88,35 @@ strlen:
 	ret
 
 ;
-; Allocates memory with the size of (BX)
-; Returns pointer in (AX), CF clear on error
-;
-; For future reference, this is the structure of a
-; memtable entry:
-;
-; byte Status
-;	00h : No block (invalid memory block/end of memtable)
-;	01h : Free entry
-;	02h : Used entry
-; word Size
-; word StartOffset
-; word Segment
-;
-; * In total, each entry is 6 bytes long!
-; ** Regardless of segments, all memory blocks are treated as if they where
-; on a single segment
-;
-alloc:
-	push bx
-	push di
-	
-	mov di, _MEMTAB_-6 ; Point at the memtable (-6)
-.find_free:
-	add di, 6
-
-	cmp byte [di], 00h ; Empty entry (end of memtable)
-	je .no_free
-	
-	cmp byte [di], 01h ; Free entry!
-	je .check_free
-	
-	jmp short .find_free
-;
-; Checks that memory region is big engough for allocation
-;
-.check_free:
-	cmp word [di+01h], bx ; Is block big engough?
-	jl short .find_free ; If it is not, go back and find more blocks!
-	
-; Else...
-;
-; Splits a free memory block entry into a "used" and "free" part
-;
-.split_free_block:
-	; Shrink free block
-	mov ax, word [di+01h]
-	sub ax, bx ; Remove "used" part
-	mov word [di+01h], ax ; Set new value
-	; StartingOffset grows (used block takes first part of free block)
-	mov ax, word [di+03h]
-	push ax ; Save AX (for usage in the new "used" entry)
-	add ax, bx ; This also shrinks the block
-	mov word [di+03h], ax ; Set the new value
-	
-	; Set the new "used" block
-	add di, 6
-	mov byte [di], 02h ; Mark block as "used"
-	mov word [di+01h], bx ; Size of block is in entry now!
-	pop ax ; Now set the StartingOffset
-	mov word [di+03h], ax ; Set the StartingOffset
-	mov word [di+05h], ds ; Set the segment of "used" block
-	
-	stc
-.end:
-	pop di ; Restore registers
-	pop bx
-	ret ; Finally return
-;
-; No allocable block found, return CF
-;
-.no_free:
-	clc
-	jmp short .end
-
-;
-; Frees memory (TODO: Merge free blocks)
-;
-; AX: Pointer of memory
-; BX: Segment
-; Returns clear Carry Flag on error
-free:
-	push ax
-	push bx
-	push di
-
-	mov di, _MEMTAB_-6
-;
-;First, let's find the block wich has AX and BX
-;
-.find_block:
-	add di, 6 ; Skip one full entry
-
-	cmp [di+03h], ax ; If pointer is the same lets try to find if same segment too
-	je short .is_same_segment
-
-	cmp byte [di+00h], 00h ; End of memtable?
-	je .no_free
-	
-	jmp short .find_block
-;
-; Check validity (is it of the same segment?)
-;
-.is_same_segment:
-	cmp word [di+05h], bx ; Is it the same segment?
-	jne short .find_block
-	
-	; Now it's time to set it as "free" instead of used
-	mov byte [di+00h], 01h ; 01h = Free block
-
-	stc
-;
-; We are done!
-;
-.end:
-	pop di
-	pop bx
-	pop ax
-	ret
-	
-.no_free:
-	clc
-	jmp short .end
-	
-;
-; Runs a program in kernel mode.
+; Runs a program.
+; As of now it can only load .COM files
 ;
 run_program:
-	push ax
-	push bx
-	
-	mov ax, 5000h
+	mov ax, 4000h
+	mov es, ax
+	mov ax, 0100h
 	call load_file
-	jc .error
+	jc short .error
 	
 	clc ; Set carry flag to clear
 .load_com:
 	; TODO: Dynamically load programs
 	
-	call 5000h; Load program file
+	mov ax, 4000h
+	mov ds, ax
+	mov es, ax
+	
+	call 4000h:0100h
+	
+	xor ax, ax
+	mov ds, ax
+	mov es, ax
 	
 	jmp short .end
 .error:
 	stc
 .end:
-	pop bx
-	pop ax
 	ret
-
-print_fat12:
-	push bp
-	push si
-	push ax
-	push bx
-	push cx
-	
-	mov ah, 0Eh
-	mov cx, 11
-	xor bh, bh
-.loop:
-	lodsb
-	
-	int 10h
-	
-	loop .loop
-.end:
-	pop cx
-	pop bx
-	pop ax
-	pop si
-	pop bp
-	ret
-
-print:
-	push bp
-	push si
-	push ax
-	push bx
-	push cx
-	
-	mov ah, 0Eh
-	xor bh, bh
-.loop:
-	lodsb
-	
-	test al, al
-	jz short .end
-	
-	int 10h
-	
-	jmp short .loop
-.end:
-	pop cx
-	pop bx
-	pop ax
-	pop si
-	pop bp
-	ret
-	
-;
-; Lists all files
-;
-list_files:
-	stc
-	call reset_drive
-	jc .error
-
-	mov ax, 19 ; Read from root directory
-	call logical_to_hts ; Get parameters for int 13h
-	
-	mov si, _DBUFF_ ; Read the root directoy and place
-	mov ax, ds ; It on the disk buffer
-	mov es, ax
-	mov bx, si
-
-	mov al, 14 ; Read 14 sectors
-	mov ah, 2
-	
-.read_root_dir:
-	push dx ; Save DX from destruction in some bioses
-	cli ; Disable interrupts to not mess up
-	
-	stc ; Set carry flag (some BIOSes do not set it!)
-	int 13h
-	
-	sti ; Enable interrupts again
-	pop dx
-	
-	jnc short .root_dir_done ; If everything was good, go to find entries
-	
-	call reset_drive
-	jnc short .read_root_dir
-	
-	jmp .error
-.root_dir_done:
-	cmp al, 14 ; Check that all sectors have been read
-	jne .error
-
-	mov cx, word [root_dir_entries]
-	mov bx, -32
-	mov ax, ds
-	mov es, ax
-.find_root_entry:	
-	add bx, 32
-	mov di, _DBUFF_
-	
-	add di, bx
-	
-	cmp byte [di], 000h
-	je short .skip_entry
-	
-	cmp byte [di], 0E5h
-	je short .skip_entry
-	
-	cmp byte [di+11], 0Fh
-	je short .skip_entry
-	
-	cmp byte [di+11], 08h
-	je short .skip_entry
-	
-	cmp byte [di+11], 00111111b
-	je short .skip_entry
-	
-	push si
-	mov si, di
-	call print_fat12
-	mov si, newline
-	call print
-	pop si
-
-.skip_entry:
-	loop .find_root_entry ; Loop...
-.error:
-	ret
-
-newline				db 0Dh,0Ah,00h
 
 ;
 ; Loads a file in AX searching for file with the name in SI
@@ -463,11 +154,6 @@ load_file:
 	sti ; Enable interrupts again
 	pop dx
 	
-	push si
-	mov si, [.filename]
-	call print
-	pop si
-	
 	jnc short .root_dir_done ; If everything was good, go to find entries
 	
 	call reset_drive
@@ -477,11 +163,6 @@ load_file:
 .root_dir_done:
 	cmp al, 14 ; Check that all sectors have been read
 	jne .error
-
-	push si
-	mov si, [.filename]
-	call print
-	pop si
 
 	mov cx, word [root_dir_entries]
 	mov bx, -32

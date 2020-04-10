@@ -1,7 +1,7 @@
 ;
-; NOTHING.ASM
+; CSERIAL.ASM
 ;
-; Does absolutely nothing
+; General serial/parallel port driver
 ;
 ; This file is part of LeafDOS
 ;
@@ -34,9 +34,7 @@
 
 use16
 cpu 8086
-org 0100h
-
-jmp short start
+org 4100h
 
 start:
 	ret

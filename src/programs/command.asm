@@ -34,7 +34,6 @@ org 0100h
 
 jmp short start
 
-SEG_PROGRAM		equ	5000h
 SEG_BUFFER		equ	0A00h
 
 start:
@@ -73,15 +72,14 @@ start:
 	call near _strfat12
 	
 	mov si, kernel_buffer.fat12
-	mov ax, SEG_PROGRAM
-	call near _fopen
+	mov ax, 5000h
+	call _fopen
 	jc short .no_file
 .file_ok:
 	mov si, kernel_program_start
 	call near _printf
-	
-	mov si, kernel_buffer.keyboard ; Arguments are given in SI
-	call SEG_PROGRAM
+
+	call 5000h
 	
 	mov si, kernel_program_end
 	call near _printf

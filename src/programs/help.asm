@@ -34,7 +34,7 @@
 
 use16
 cpu 8086
-org 5000h
+org 0100h
 
 jmp short start
 

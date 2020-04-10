@@ -30,6 +30,12 @@ do
 	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.sys || exit
 done
 
+for i in src/drivers/*.asm
+do
+	echo "ASSEMBLY :: $i"
+	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.sys || exit
+done
+
 for i in src/common/*.asm
 do
 	echo "ASSEMBLY :: $i"

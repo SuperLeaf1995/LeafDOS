@@ -1,6 +1,6 @@
 use16
 cpu 8086
-org 0C00h
+org 0100h
 
 start:
 	mov ah, 0Eh
