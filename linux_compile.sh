@@ -42,10 +42,10 @@ do
 	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.lib || exit
 done
 
-for i in src/common/*.lss
-do
-	cp $i bin/`basename $i` || exit
-done
+#for i in src/common/*.lss
+#do
+#	cp $i bin/`basename $i` || exit
+#done
 
 if [ ! -e disk/ldos.flp ]
 then

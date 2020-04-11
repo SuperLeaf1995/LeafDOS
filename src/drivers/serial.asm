@@ -1,9 +1,6 @@
+;  SERIAL.ASM
 ;
-; NOTHING.ASM
-;
-; Does absolutely nothing
-;
-; This file is part of LeafDOS
+;  General COM/LPT port driver
 ;
 ;  Redistribution and use in source and binary forms, with or without
 ;  modification, are permitted provided that the following conditions are
@@ -30,13 +27,13 @@
 ;  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 ;  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 ;  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-;
+;  
 
 use16
 cpu 8086
-org 0100h
+org 7500h
 
-jmp short start
+jmp start
 
 start:
 	ret

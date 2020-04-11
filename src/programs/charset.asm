@@ -39,6 +39,7 @@ org 100h
 jmp short start
 
 start:
+	call 4000h:0103h
 	call print_charset
 	ret
 	

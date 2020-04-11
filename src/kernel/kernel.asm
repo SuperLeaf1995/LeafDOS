@@ -40,9 +40,7 @@ cpu 8086
 org 0500h
 
 	jmp start
-
-; This functions are used by kernel programs
-	jmp load_file		;0003
+	jmp load_file
 
 start:
 	xor ax, ax
@@ -58,34 +56,22 @@ start:
 	
 	;call list_files
 	
-	mov si, cmd
-	call run_program
+	mov ax, 7000h
+	mov si, tty_sys
+	call load_file
+	call 7000h
+	
+	mov ax, 7500h
+	mov si, cserial_sys
+	call load_file
+	call 7500h
 	
 	jmp $
 	
 ; Etc
 tmpbuf		times 16 db 0
-cmd			db "COMMAND COM"
-
-;
-; Gets lenght of a string in SI, returns CX
-;
-strlen:
-	push ax
-	push si
-	
-.loop:
-	lodsb
-	inc cx
-	
-	test al, al
-	jnz short .loop
-.end:
-	dec cx
-	
-	pop si
-	pop ax
-	ret
+tty_sys		db "VIDEO   SYS"
+cserial_sys	db "SERIAL  SYS"
 
 ;
 ; Runs a program.
