@@ -66,12 +66,16 @@ start:
 	call load_file
 	call 7500h
 	
+	mov si, cmd
+	call run_program
+	
 	jmp $
 	
 ; Etc
 tmpbuf		times 16 db 0
 tty_sys		db "VIDEO   SYS"
 cserial_sys	db "SERIAL  SYS"
+cmd			db "COMMAND COM"
 
 ;
 ; Runs a program.

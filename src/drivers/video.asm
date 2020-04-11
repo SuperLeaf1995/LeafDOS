@@ -112,10 +112,6 @@ initialize:
 ; Returns value in AX (see below for value meanings!)
 ;
 detectVideoMode:
-	push es
-	push ax
-	push bx
-	
 	xor ax, ax ; Get information from BDA
 	mov es, ax
 	mov bx, 410h
@@ -131,10 +127,6 @@ detectVideoMode:
 	; Any other value should be treated as "error"
 	
 	stc
-	
-	pop bx
-	pop ax
-	pop es
 	ret
 
 ;
@@ -142,12 +134,6 @@ detectVideoMode:
 ; AL = Character
 ;
 putCharacter:
-	push si
-	push di
-	push ax
-	push es
-	push bx
-	
 	mov ah, [text_attr]
 	
 	cmp al, 0Dh
@@ -181,16 +167,12 @@ putCharacter:
 	
 	inc word [text_x]
 .end:
-	pop bx
-	pop es
-	pop ax
-	pop di
-	pop si
 	ret
+	
 .do_scroll:
 	pop ax
 	
-	call _scroll
+	call scrollScreen
 	
 	mov ax, [text_h]
 	dec ax
@@ -215,7 +197,7 @@ putCharacter:
 .do_scroll_new:
 	pop ax
 	
-	call _scroll
+	call scrollScreen
 	
 	mov ax, [text_h]
 	dec ax
@@ -229,14 +211,8 @@ putCharacter:
 ; BX = Y
 ;
 gotoXandY:
-	push ax
-	push bx
-	
 	mov word [text_x], ax
 	mov word [text_y], bx
-	
-	pop bx
-	pop ax
 	ret
 	
 ;
@@ -244,8 +220,6 @@ gotoXandY:
 ; No parameters
 ;
 scrollScreen:
-	push ax
-	
 	dec word [text_y] ;decrease y
 	dec word [text_y]
 	
@@ -288,8 +262,6 @@ scrollScreen:
 	add di, 2
 	
 	loop .clear_last
-	
-	pop ax
 	ret
 	
 ;
@@ -297,12 +269,6 @@ scrollScreen:
 ; No parameters
 ;
 clearScreen:
-	push ax
-	push bx
-	push cx
-	push es
-	push di
-	
 	mov ax, [text_seg] ;segmentate
 	mov es, ax ;to text location
 	
@@ -320,10 +286,4 @@ clearScreen:
 	add di, 2 ;skip a full word
 	
 	loop .loop
-	
-	pop di
-	pop es
-	pop cx
-	pop bx
-	pop ax
 	ret
