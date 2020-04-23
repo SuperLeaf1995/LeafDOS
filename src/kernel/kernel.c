@@ -10,12 +10,6 @@ uint16_t tx; uint16_t ty;
 uint16_t tw; uint16_t th;
 uint8_t tc;
 
-static inline uint8_t inportb(uint16_t port) {
-	uint8_t value;
-	asm volatile("in %%dx, %%al":"=a"(value):"d"(port));
-	return value;
-}
-
 static inline size_t strlen(const char * __s) {
 	size_t s = 0;
 	while(__s[s] != '\0') { s++; }
@@ -66,16 +60,34 @@ static inline void kprintf(const char * __s) {
 	return;
 }
 
-static inline unsigned char kgetc(void) {
-	unsigned char c;
-	c = inportb(0x60);
-	return c;
+static inline char * kitoa(int num, char * str, int base) {
+	signed int i = 0,rem;
+	unsigned char isNeg = false;
+
+	if(!num) {
+		str[i++] = '0'; str[i] = '\0';
+		return str;
+	}
+	
+	if(num < 0 && base == 10) {
+		num = -num;
+	}
+	
+	while(num != 0) {
+		rem = (num%base);
+		str[i++] = (rem>9) ? (rem-10)+'a' : rem+'0';
+		num = (num/base);
+	}
+	
+	if(isNeg) {
+		str[i++] = '-';
+	}
+	str[i] = '\0';
+	return str;
 }
 
 void kmain(void) {
 	ktty();
-	kprintf("bruh\nur not ight");
-	for(;;) {
-		kputc(kgetc());
-	}
+	
+	/*Probe for PCI devices*/
 }
