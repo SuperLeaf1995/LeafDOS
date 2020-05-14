@@ -3,6 +3,16 @@
 #clear past stuff
 rm -f bin/*
 
+if [ ! -e disk ]
+then
+	mkdir disk || exit
+fi
+
+if [ ! -e bin ]
+then
+	mkdir bin || exit
+fi
+
 #compile assembly
 
 echo "ASSEMBLY :: Bootloader"
@@ -20,16 +30,22 @@ do
 	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.sys || exit
 done
 
+for i in src/drivers/*.asm
+do
+	echo "ASSEMBLY :: $i"
+	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.sys || exit
+done
+
 for i in src/common/*.asm
 do
 	echo "ASSEMBLY :: $i"
 	nasm -O0 -fbin -t -Wall $i -o bin/`basename $i .asm`.lib || exit
 done
 
-for i in src/common/*.lss
-do
-	cp $i bin/`basename $i .asm` || exit
-done
+#for i in src/common/*.lss
+#do
+#	cp $i bin/`basename $i` || exit
+#done
 
 if [ ! -e disk/ldos.flp ]
 then

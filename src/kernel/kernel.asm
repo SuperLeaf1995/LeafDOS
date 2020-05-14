@@ -33,16 +33,14 @@
 ;  
 
 _KERNEL_			equ 0500h
-_DBUFF_				equ 0800h
+_DBUFF_				equ 0A00h
 
 use16
 cpu 8086
 org 0500h
 
-jmp short start
-
-jmp run_program
-jmp load_file
+	jmp start
+	jmp load_file
 
 start:
 	xor ax, ax
@@ -56,130 +54,51 @@ start:
 	mov es, ax ; all data and extended segment into the
 	mov ds, ax ; kernel segment
 	
-	push di
-	mov di, 02000h
-	mov byte [di+00h], 01h
-	mov word [di+01h], 0FFFh ; Set size to take an entire segment (minus ome stuff)
-	mov word [di+03h], 0B00h ; Start after kernel and _DBUF_
-	mov word [di+05h], 0000h ; Set the segment as our kernel segment!
-	mov byte [di+07h], 00h ; Set EOF for memtable
-	pop di
+	;call list_files
 	
-	mov si, mod_comm
+	mov ax, 7000h
+	mov si, tty_sys
+	call load_file
+	call 7000h
+	
+	mov ax, 7500h
+	mov si, cserial_sys
+	call load_file
+	call 7500h
+	
+	mov si, cmd
 	call run_program
-	jc .error
-
-.error:
+	
 	jmp $
-
-mod_comm	db "COMMAND COM"
-error_mem	db "Not engough memory!",0Dh,0Ah,0
-
-;
-; Allocates memory with the size of (BX)
-; Returns pointer in (AX), CF clear on error
-;
-; For future reference, this is the structure of a
-; memtable entry:
-;
-; byte Status
-;	00h : No block (invalid memory block/end of memtable)
-;	01h : Free entry
-;	02h : Used entry
-; word Size
-; word StartOffset
-; word Segment
-;
-; * In total, each entry is 6 bytes long!
-; ** Regardless of segments, all memory blocks are treated as if they where
-; on a single segment
-;
-alloc:
-	push bx
-	push di
 	
-	mov di, 02000h-6 ; Point at the memtable (-6)
-.find_free:
-	add di, 6
-
-	cmp byte [di], 00h ; Empty entry (end of memtable)
-	je .no_free
-	
-	cmp byte [di], 01h ; Free entry!
-	je .check_free
-	
-	jmp short .find_free
-;
-; Checks that memory region is big engough for allocation
-;
-.check_free:
-	cmp word [di+01h], bx ; Is block big engough?
-	jl short .find_free ; If it is not, go back and find more blocks!
-	
-; Else...
-;
-; Splits a free memory block entry into a "used" and "free" part
-;
-.split_free_block:
-	; Shrink free block
-	mov ax, word [di+01h]
-	sub ax, bx ; Remove "used" part
-	mov word [di+01h], ax ; Set new value
-	; StartingOffset grows (used block takes first part of free block)
-	mov ax, word [di+03h]
-	push ax ; Save AX (for usage in the new "used" entry)
-	add ax, bx ; This also shrinks the block
-	mov word [di+03h], ax ; Set the new value
-	
-	; Set the new "used" block
-	add di, 6
-	mov byte [di], 02h ; Mark block as "used"
-	mov word [di+01h], bx ; Size of block is in entry now!
-	pop ax ; Now set the StartingOffset
-	mov word [di+03h], ax ; Set the StartingOffset
-	mov word [di+05h], ds ; Set the segment of "used" block
-	
-	stc
-.end:
-	pop di ; Restore registers
-	pop bx
-	ret ; Finally return
-;
-; No allocable block found, return CF
-;
-.no_free:
-	clc
-	jmp short .end
+; Etc
+tmpbuf		times 16 db 0
+tty_sys		db "VIDEO   SYS"
+cserial_sys	db "SERIAL  SYS"
+cmd			db "COMMAND COM"
 
 ;
 ; Runs a program.
 ; As of now it can only load .COM files
 ;
 run_program:
-	mov bx, 4096 ; Allocate 4096 Bytes for our file
-	call alloc
-	jc .error
-	
-	mov ax, 0A00h
+	mov ax, 4000h
 	mov es, ax
 	mov ax, 0100h
 	call load_file
-	jc .error
+	jc short .error
 	
 	clc ; Set carry flag to clear
 .load_com:
 	; TODO: Dynamically load programs
-	; Write PSP for the COM file
-	xor di, di
-	mov word [es:di+00h], 0CD22h
 	
-	mov ax, 0A00h ; Set the segments for the .COM file
+	mov ax, 4000h
 	mov ds, ax
-	mov es, ax ; Set ES to segment of DS
+	mov es, ax
 	
-	call 0A00h:0100h ; Load COM file
+	call 4000h:0100h
 	
-	xor ax, ax ; Set back our segments
+	xor ax, ax
 	mov ds, ax
 	mov es, ax
 	
@@ -187,28 +106,6 @@ run_program:
 .error:
 	stc
 .end:
-	ret
-	
-;
-; Prints string in SI
-;
-print:
-	push ax
-	push si
-	
-	mov ah, 0Eh
-.loop:
-	lodsb
-	
-	test al, al
-	jz short .end
-	
-	int 10h
-
-	jmp short .loop
-.end:
-	pop si
-	pop ax
 	ret
 
 ;
@@ -222,37 +119,65 @@ load_file:
 	mov ax, es
 	mov word [.segment], ax
 	
+	stc
 	call reset_drive
 	jc .error
 
 	mov ax, 19 ; Read from root directory
 	call logical_to_hts ; Get parameters for int 13h
 	
-	mov si, _DBUFF_ ; Sectors of the
-	mov ax, ds
+	mov si, _DBUFF_ ; Read the root directoy and place
+	mov ax, ds ; It on the disk buffer
 	mov es, ax
-	mov bx, si ; Root directory
+	mov bx, si
 
 	mov al, 14 ; Read 14 sectors
 	mov ah, 2
+	
 .read_root_dir:
-	stc
+	push dx ; Save DX from destruction in some bioses
+	cli ; Disable interrupts to not mess up
+	
+	stc ; Set carry flag (some BIOSes do not set it!)
 	int 13h
-	jnc short .root_dir_done
+	
+	sti ; Enable interrupts again
+	pop dx
+	
+	jnc short .root_dir_done ; If everything was good, go to find entries
+	
 	call reset_drive
 	jnc short .read_root_dir
+	
 	jmp .error
 .root_dir_done:
+	cmp al, 14 ; Check that all sectors have been read
+	jne .error
+
 	mov cx, word [root_dir_entries]
 	mov bx, -32
-.find_root_entry:
-	add bx, 32
-	
 	mov ax, ds
 	mov es, ax
+.find_root_entry:
+	add bx, 32
 	mov di, _DBUFF_
 	
 	add di, bx
+	
+	cmp byte [di], 000h
+	je short .skip_entry
+	
+	cmp byte [di], 0E5h
+	je short .skip_entry
+	
+	cmp byte [di+11], 0Fh
+	je short .skip_entry
+	
+	cmp byte [di+11], 08h
+	je short .skip_entry
+	
+	cmp byte [di+11], 00111111b
+	je short .skip_entry
 	
 	xchg dx, cx
 
@@ -263,6 +188,7 @@ load_file:
 	
 	xchg dx, cx
 	
+.skip_entry:
 	loop .find_root_entry ; Loop...
 	
 	jmp .error
@@ -280,8 +206,14 @@ load_file:
 	mov al, 09h ; read all sectors of the FAT
 	mov ah, 2
 .read_fat:
+	push dx
+	cli
+	
 	stc
 	int 13h
+	
+	sti
+	pop dx
 	
 	jnc short .fat_done
 	call reset_drive
@@ -306,8 +238,14 @@ load_file:
 	pop ax
 	push ax
 	
+	push dx
+	cli
+	
 	stc
 	int 13h
+	
+	sti
+	pop dx
 	
 	jnc short .next_cluster
 	call reset_drive
@@ -317,6 +255,7 @@ load_file:
 	xor dx, dx
 	mov bx, 3
 	mul bx
+	
 	mov bx, 2
 	div bx
 	
@@ -329,9 +268,12 @@ load_file:
 	jz short .even_cluster
 .odd_cluster:
 	push cx
+	
 	mov cl, 4
 	shr ax, cl ; Shift 4 bits ax
+	
 	pop cx
+	
 	jmp short .check_eof
 .even_cluster:
 	and ax, 0FFFh
@@ -340,15 +282,16 @@ load_file:
 	cmp ax, 0FF8h ; Check for eof
 	jae short .end
 	
-	push ax
-	mov ax, [bytes_per_sector]
-	add word [.offs], ax ; Set correct BPS
-	pop ax
+	;push ax
+	;mov ax, [bytes_per_sector]
+	add word [.offs], 512 ; Set correct BPS
+	;pop ax
 	
 	jmp short .load_sector
 .end: ; File is now loaded in the ram
 	pop ax ; Pop off ax
 	clc
+	
 	ret
 .error:
 	stc
@@ -363,10 +306,14 @@ load_file:
 reset_drive:
 	push ax
 	push dx
+	
 	xor ax, ax
+	
 	mov dl, byte [device_number]
+	
 	stc
 	int 13h
+	
 	pop dx
 	pop ax
 	ret
@@ -374,20 +321,29 @@ reset_drive:
 logical_to_hts:
 	push bx
 	push ax
+	
 	mov bx, ax
+	
 	xor dx, dx
 	div word [sectors_per_track]
+	
 	add dl, 01h
+	
 	mov cl, dl
 	mov ax, bx
+	
 	xor dx, dx
 	div word [sectors_per_track]
+	
 	xor dx, dx
 	div word [sides]
+	
 	mov dh, dl
 	mov ch, al
+	
 	pop ax
 	pop bx
+	
 	mov dl, byte [device_number]
 	ret
 

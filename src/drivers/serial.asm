@@ -1,9 +1,6 @@
+;  SERIAL.ASM
 ;
-; HIMEM.ASM
-; 
-; Detects and enables the A20 gate for use by other programs
-;
-; This file is part of LeafDOS
+;  General COM/LPT port driver
 ;
 ;  Redistribution and use in source and binary forms, with or without
 ;  modification, are permitted provided that the following conditions are
@@ -32,18 +29,11 @@
 ;  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ;  
 
-
 use16
 cpu 8086
+org 7500h
 
-section .text
-
-org 100h
+jmp start
 
 start:
-	mov ah, 0Eh
-	mov al, 'A'
-	int 10h
 	ret
-	
-ps2_lib		db "PS2     LIB"
